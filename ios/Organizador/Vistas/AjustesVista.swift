@@ -21,6 +21,7 @@ struct AjustesVista: View {
                 }
             }
             .navigationTitle("Ajustes")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .confirmationDialog("¿Cerrar sesión?", isPresented: $confirmar, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) {
                     cerrando = true

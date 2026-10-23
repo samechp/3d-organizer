@@ -35,6 +35,9 @@ final class Sesion {
 
     func salir() async {
         await ClienteAPI.compartido.salir()
+        // La copia de los pedidos se borra; la cola sin señal no: son piezas
+        // ya impresas y se mandan cuando alguien vuelva a entrar.
+        Almacen.borrarTodo()
         token = nil
     }
 }

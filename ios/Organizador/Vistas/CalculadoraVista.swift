@@ -7,6 +7,7 @@ struct CalculadoraVista: View {
             ContentUnavailableView("Calculadora", systemImage: "plus.forwardslash.minus",
                                    description: Text("Aquí va a estar la calculadora de precios."))
                 .navigationTitle("Calculadora")
+                .toolbarTitleDisplayMode(.inlineLarge)
         }
     }
 }

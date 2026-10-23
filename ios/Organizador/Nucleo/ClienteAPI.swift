@@ -287,6 +287,11 @@ final class ClienteAPI {
             throw ErrorAPI.sinSesion
         case 409 where ruta == "/api/tandas" && metodo == "POST":
             throw ErrorInterno.conflicto(datos)
+        case 502, 503, 504:
+            // Es nginx diciendo que la app de atrás no contesta (reinicio,
+            // despliegue): para quien llama es lo mismo que no tener señal, y así
+            // la cola sin señal reintenta en vez de descartar la tanda.
+            throw ErrorAPI.sinConexion
         default:
             throw ErrorAPI.servidor(ClienteAPI.textoDeError(datos, codigo: http.statusCode))
         }

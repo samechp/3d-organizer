@@ -110,6 +110,151 @@ pruebas.append(Prueba(nombre: "unidades 0 o vida de la maquina 0 no dividen entr
     return finito ? [] : ["el resultado no es finito"]
 })
 
+// MARK: - Cola de tandas sin señal
+
+/// Corre una prueba async desde el arnés síncrono. El trabajo va en una tarea
+/// suelta (no en el hilo principal, que queda esperando).
+final class Caja<T>: @unchecked Sendable {
+    var valor: T
+    init(_ valor: T) { self.valor = valor }
+}
+
+func esperar(_ trabajo: @escaping () async -> [String]) -> [String] {
+    let listo = DispatchSemaphore(value: 0)
+    let resultado = Caja<[String]>([])
+    Task.detached {
+        resultado.valor = await trabajo()
+        listo.signal()
+    }
+    listo.wait()
+    return resultado.valor
+}
+
+/// Lo que el enviador falso recibió. Con cerrojo: dos vaciados podrían llamarlo a la vez.
+final class Registro: @unchecked Sendable {
+    private let cerrojo = NSLock()
+    private var lista: [TandaPendiente] = []
+    func anotar(_ t: TandaPendiente) { cerrojo.lock(); lista.append(t); cerrojo.unlock() }
+    var enviadas: [TandaPendiente] { cerrojo.lock(); defer { cerrojo.unlock() }; return lista }
+}
+
+func archivoTemporal() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("cola-prueba-\(UUID().uuidString).json")
+}
+
+func tandaDePrueba(_ cantidad: Int) -> TandaPendiente {
+    TandaPendiente(idCliente: UUID(), modeloId: 7, cantidad: cantidad,
+                   cuando: Date(timeIntervalSince1970: 1_800_000_000 + Double(cantidad)))
+}
+
+pruebas.append(Prueba(nombre: "pruebaColaEnviaEnOrden") {
+    esperar {
+        let registro = Registro()
+        let cola = ColaTandas(archivo: archivoTemporal()) { t in
+            registro.anotar(t)
+            return .enviada
+        }
+        let tandas = [tandaDePrueba(50), tandaDePrueba(37), tandaDePrueba(80)]
+        tandas.forEach { cola.agregar($0) }
+        await cola.vaciar()
+        var fallos: [String] = []
+        if registro.enviadas != tandas { fallos.append("el orden de envío no es el de anotación") }
+        if !cola.pendientes.isEmpty { fallos.append("quedaron \(cola.pendientes.count) pendientes") }
+        return fallos
+    }
+})
+
+/// Con el enviador deteniéndose en la segunda: la primera sale y las otras quedan.
+func pruebaSeDetiene() -> [String] {
+    esperar {
+        let registro = Registro()
+        let cola = ColaTandas(archivo: archivoTemporal()) { t in
+            registro.anotar(t)
+            return registro.enviadas.count == 1 ? .enviada : .detener
+        }
+        let tandas = [tandaDePrueba(1), tandaDePrueba(2), tandaDePrueba(3)]
+        tandas.forEach { cola.agregar($0) }
+        await cola.vaciar()
+        var fallos: [String] = []
+        if cola.pendientes != Array(tandas.dropFirst()) {
+            fallos.append("se esperaban las 2 últimas pendientes, hay \(cola.pendientes.count)")
+        }
+        if registro.enviadas.count != 2 { fallos.append("siguió enviando después de detenerse") }
+        if !cola.descartadas.isEmpty { fallos.append("descartó algo al detenerse") }
+        return fallos
+    }
+}
+
+// En la app, sinConexion y sinSesion llegan los dos como .detener (Nucleo/Envios.swift).
+pruebas.append(Prueba(nombre: "pruebaColaSinConexionNoBorra") { pruebaSeDetiene() })
+pruebas.append(Prueba(nombre: "pruebaColaSinSesionNoBorra") { pruebaSeDetiene() })
+
+pruebas.append(Prueba(nombre: "pruebaColaSobreviveReinicio") {
+    let archivo = archivoTemporal()
+    let primera = ColaTandas(archivo: archivo) { _ in .detener }
+    let tandas = [tandaDePrueba(50), tandaDePrueba(12)]
+    tandas.forEach { primera.agregar($0) }
+    let segunda = ColaTandas(archivo: archivo) { _ in .detener }
+    return segunda.pendientes == tandas ? [] : ["la cola leída del archivo no es la misma"]
+})
+
+pruebas.append(Prueba(nombre: "pruebaDosVaciadosALaVezEnvianUnaVez") {
+    esperar {
+        let registro = Registro()
+        let cola = ColaTandas(archivo: archivoTemporal()) { t in
+            registro.anotar(t)
+            // Lento a propósito: el segundo vaciado arranca mientras el primero espera.
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            return .enviada
+        }
+        cola.agregar(tandaDePrueba(50))
+        cola.agregar(tandaDePrueba(37))
+        async let uno: Void = cola.vaciar()
+        async let dos: Void = cola.vaciar()
+        _ = await (uno, dos)
+        var fallos: [String] = []
+        if registro.enviadas.count != 2 { fallos.append("se enviaron \(registro.enviadas.count) en vez de 2") }
+        if !cola.pendientes.isEmpty { fallos.append("quedaron pendientes") }
+        return fallos
+    }
+})
+
+pruebas.append(Prueba(nombre: "descartada se quita de la cola y se guarda con su motivo") {
+    esperar {
+        let archivo = archivoTemporal()
+        let cola = ColaTandas(archivo: archivo) { t in
+            t.cantidad == 2 ? .descartar("No existe ese modelo") : .enviada
+        }
+        [tandaDePrueba(1), tandaDePrueba(2), tandaDePrueba(3)].forEach { cola.agregar($0) }
+        await cola.vaciar()
+        let releida = ColaTandas(archivo: archivo) { _ in .detener }
+        var fallos: [String] = []
+        if !cola.pendientes.isEmpty { fallos.append("quedaron pendientes") }
+        if releida.descartadas.map({ $0.motivo }) != ["No existe ese modelo"] {
+            fallos.append("la descartada no quedó guardada con su motivo")
+        }
+        return fallos
+    }
+})
+
+pruebas.append(Prueba(nombre: "regla de 3 horas igual a la del servidor") {
+    let base = Date(timeIntervalSince1970: 1_800_000_000)
+    var fallos: [String] = []
+    if !ReglaParecida.esParecida(cantidad: 50, cuando: base, otraCantidad: 50,
+                                 otroCuando: base.addingTimeInterval(-3 * 3600)) {
+        fallos.append("a 3 h justas debería ser parecida")
+    }
+    if ReglaParecida.esParecida(cantidad: 50, cuando: base, otraCantidad: 50,
+                                otroCuando: base.addingTimeInterval(3 * 3600 + 60)) {
+        fallos.append("a 3 h 1 min no debería ser parecida")
+    }
+    if ReglaParecida.esParecida(cantidad: 50, cuando: base, otraCantidad: 49, otroCuando: base) {
+        fallos.append("con otra cantidad no debería ser parecida")
+    }
+    return fallos
+})
+
 // Corre todo y sale con código distinto de cero si algo falló.
 var huboFallas = false
 for prueba in pruebas {
