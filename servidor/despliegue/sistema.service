@@ -1,0 +1,86 @@
+# Servicio de 3D Organizer (sistema.printoverse.store).
+#
+#   sudo systemctl status sistema     ver como va
+#   sudo systemctl restart sistema    reiniciar
+#   sudo journalctl -u sistema -f     ver los registros en vivo
+#
+# Se instala en /etc/systemd/system/sistema.service (lo hace desplegar.sh).
+
+[Unit]
+Description=3D Organizer (sistema.printoverse.store)
+# Sin base de datos no hay servicio: que espere, no que falle en bucle.
+After=network-online.target mariadb.service
+Wants=network-online.target
+Requires=mariadb.service
+
+# Si se cae 5 veces en 60 s es un fallo real, no un tropiezo: parar y dejarlo en
+# el journal en vez de reiniciar en bucle para siempre. Van aqui y no en
+# [Service]: systemd las ignora en silencio si se ponen en el sitio equivocado.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=notify
+User=sistema
+Group=sistema
+WorkingDirectory=/opt/sistema/app
+EnvironmentFile=/opt/sistema/.env
+
+# El usuario de servicio no tiene carpeta personal, pero gunicorn intenta
+# escribir en ella al arrancar y suelta un "Permission denied" en cada reinicio.
+# /run/sistema ya existe (RuntimeDirectory) y es de los pocos sitios donde puede
+# escribir, asi que sirve de HOME.
+Environment=HOME=/run/sistema
+# El codigo esta en una ruta de solo lectura (ProtectSystem): que no intente
+# guardar .pyc ahi.
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# gunicorn dirige, uvicorn habla ASGI. Solo escucha en el socket unix: nada de
+# puerto TCP, asi nadie llega a la app sin pasar por nginx (de eso depende que
+# X-Real-IP sea de fiar para el limite de intentos).
+# 2 procesos: la app es de una sola persona y casi todo es leer/escribir filas.
+ExecStart=/opt/sistema/venv/bin/gunicorn \
+    --workers 2 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind unix:/run/sistema/gunicorn.sock \
+    --timeout 60 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile - \
+    servidor.app.principal:app
+
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# El socket vive en /run/sistema, que systemd crea y borra solo.
+RuntimeDirectory=sistema
+RuntimeDirectoryMode=0755
+
+# Que se levante siempre, tambien despues de reiniciar la maquina.
+Restart=always
+RestartSec=3
+
+# ── Encierro ──────────────────────────────────────────────
+# La app no necesita nada de esto, asi que se le quita. Si algun dia alguien
+# logra ejecutar codigo a traves de ella, se encuentra una caja vacia.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Solo internet normal: sin sockets crudos ni protocolos raros.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Unicos sitios donde puede escribir: el socket y las fotos de los modelos.
+# Con `ProtectSystem=strict` TODO lo demas es de solo lectura, aunque los
+# permisos de la carpeta digan lo contrario: sin esta linea, subir una foto
+# moriria con "Read-only file system".
+ReadWritePaths=/run/sistema /opt/sistema/fotos
+
+[Install]
+WantedBy=multi-user.target
