@@ -1,0 +1,6 @@
+fastapi
+sqlalchemy>=2
+pymysql
+python-multipart
+gunicorn
+uvicorn[standard]
