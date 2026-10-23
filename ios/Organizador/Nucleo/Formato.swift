@@ -29,6 +29,72 @@ enum Formato {
         return n < 0 ? "-" + salida : salida
     }
 
+    /// Más que esto no cabe en un Int al multiplicar por los decimales.
+    private static let tope: Double = 1e12
+
+    /// 945.4 -> "$945"; 1234567 -> "$1.234.567"; -50 -> "-$50".
+    static func pesos(_ valor: Double) -> String {
+        // Int() de un número gigante (alguien escribió 1e20 gramos) cerraría la app.
+        let acotado = valor.isFinite ? min(max(valor, -tope), tope) : 0
+        let n = Int(acotado.rounded())
+        return (n < 0 ? "-$" : "$") + num(abs(n))
+    }
+
+    /// Para leer en pantalla, con miles: 2.5 -> "2,5"; 5000 -> "5.000".
+    static func decimal(_ valor: Double, maxDecimales: Int = 2) -> String {
+        let (negativo, entero, fraccion) = partes(valor, maxDecimales: maxDecimales)
+        return (negativo ? "-" : "") + num(entero) + fraccion
+    }
+
+    /// Para poner en un campo que se edita: sin puntos de miles, porque al
+    /// leerlo de vuelta "150.000" sería 150. 150000 -> "150000"; 2.5 -> "2,5".
+    static func editable(_ valor: Double, maxDecimales: Int = 2) -> String {
+        let (negativo, entero, fraccion) = partes(valor, maxDecimales: maxDecimales)
+        return (negativo ? "-" : "") + String(entero) + fraccion
+    }
+
+    /// Lee lo que se escribió en un campo numérico. El teclado decimal del
+    /// iPhone en español pone coma; se aceptan coma y punto como decimal.
+    static func leerNumero(_ texto: String) -> Double? {
+        let limpio = texto.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        guard !limpio.isEmpty, let n = Double(limpio), n.isFinite else { return nil }
+        return n
+    }
+
+    /// 195 -> "3 h 15 min"; 45 -> "45 min"; 120 -> "2 h".
+    static func horasMinutos(_ minutos: Double) -> String {
+        let total = minutos.isFinite ? Int(min(max(0, minutos), tope).rounded()) : 0
+        let h = total / 60
+        let m = total % 60
+        if h == 0 { return "\(m) min" }
+        if m == 0 { return "\(num(h)) h" }
+        return "\(num(h)) h \(m) min"
+    }
+
+    private static func partes(_ valor: Double, maxDecimales: Int) -> (Bool, Int, String) {
+        guard valor.isFinite else { return (false, 0, "") }
+        let acotado = min(max(valor, -tope), tope)
+        let digitos = max(0, min(maxDecimales, 6))
+        var escala = 1
+        for _ in 0..<digitos { escala *= 10 }
+        let total = Int((abs(acotado) * Double(escala)).rounded())
+        let entero = total / escala
+        var fraccion = total % escala
+        var quedan = digitos
+        // Sin ceros de sobra: 2,50 -> 2,5 y 3,00 -> 3.
+        while quedan > 0 && fraccion % 10 == 0 {
+            fraccion /= 10
+            quedan -= 1
+        }
+        var texto = ""
+        if quedan > 0 {
+            let cifras = String(fraccion)
+            texto = "," + String(repeating: "0", count: max(0, quedan - cifras.count)) + cifras
+        }
+        return (acotado < 0 && total > 0, entero, texto)
+    }
+
     static func plural(_ n: Int, _ uno: String, _ varios: String) -> String {
         n == 1 ? uno : varios
     }

@@ -164,6 +164,8 @@ struct EntrarVista: View {
             do {
                 // Si sale bien, RaizVista cambia sola a las pestañas.
                 try await sesion.entrar(correo: correoLimpio, clave: clave)
+            } catch is CancellationError {
+                // La tarea se canceló (la pantalla se fue): no es un fallo de entrar.
             } catch {
                 let texto = (error as? LocalizedError)?.errorDescription ?? "No se pudo entrar."
                 mensaje = texto

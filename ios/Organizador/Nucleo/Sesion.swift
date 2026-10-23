@@ -8,6 +8,11 @@ import Observation
 @Observable
 final class Sesion {
     private(set) var token: String?
+    /// Con qué correo se entró, para mostrarlo en Ajustes. No es secreto (el
+    /// token sí, y va en el llavero).
+    private(set) var correo: String? = nil
+
+    private static let claveCorreo = "sesion.correo"
 
     var haySesion: Bool { token != nil }
 
@@ -15,6 +20,7 @@ final class Sesion {
 
     init() {
         token = Llavero.leer()
+        correo = UserDefaults.standard.string(forKey: Sesion.claveCorreo)
         observador = NotificationCenter.default.addObserver(
             forName: .sesionVencida, object: nil, queue: .main
         ) { [weak self] _ in
@@ -31,6 +37,15 @@ final class Sesion {
 
     func entrar(correo: String, clave: String) async throws {
         token = try await ClienteAPI.compartido.entrar(correo: correo, clave: clave)
+        recordarCorreo(correo)
+    }
+
+    /// Las sesiones de antes de guardar el correo lo piden a /api/yo una vez.
+    func recordarCorreo(_ nuevo: String) {
+        let limpio = nuevo.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !limpio.isEmpty else { return }
+        correo = limpio
+        UserDefaults.standard.set(limpio, forKey: Sesion.claveCorreo)
     }
 
     func salir() async {
@@ -38,6 +53,8 @@ final class Sesion {
         // La copia de los pedidos se borra; la cola sin señal no: son piezas
         // ya impresas y se mandan cuando alguien vuelva a entrar.
         Almacen.borrarTodo()
+        UserDefaults.standard.removeObject(forKey: Sesion.claveCorreo)
+        correo = nil
         token = nil
     }
 }

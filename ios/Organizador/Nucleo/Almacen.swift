@@ -69,11 +69,34 @@ enum Almacen {
         return nil
     }
 
-    /// Borra todo lo guardado (al cerrar sesión).
+    // MARK: - Perfiles y filamentos
+
+    /// Sin señal, la calculadora sale de aquí: por eso se guardan cada vez que
+    /// llegan del servidor o se cambian desde Ajustes.
+    static func perfiles() -> [Perfil]? {
+        leer([Perfil].self, "perfiles.json")
+    }
+
+    static func guardarPerfiles(_ perfiles: [Perfil]) {
+        escribir(perfiles, "perfiles.json")
+    }
+
+    static func filamentos() -> [Filamento]? {
+        leer([Filamento].self, "filamentos.json")
+    }
+
+    static func guardarFilamentos(_ filamentos: [Filamento]) {
+        escribir(filamentos, "filamentos.json")
+    }
+
+    /// Borra todo lo guardado (al cerrar sesión), menos la cola sin señal.
     static func borrarTodo() {
         let archivos = (try? FileManager.default.contentsOfDirectory(at: carpeta, includingPropertiesForKeys: nil)) ?? []
-        for archivo in archivos where archivo.lastPathComponent.hasPrefix("pedido") {
-            try? FileManager.default.removeItem(at: archivo)
+        for archivo in archivos {
+            let nombre = archivo.lastPathComponent
+            if nombre.hasPrefix("pedido") || nombre == "perfiles.json" || nombre == "filamentos.json" {
+                try? FileManager.default.removeItem(at: archivo)
+            }
         }
     }
 

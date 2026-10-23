@@ -5,6 +5,7 @@ import SwiftUI
 struct RaizVista: View {
     @Environment(Sesion.self) private var sesion
     @Environment(Envios.self) private var envios
+    @Environment(Catalogo.self) private var catalogo
     @Environment(\.scenePhase) private var fase
 
     var body: some View {
@@ -32,9 +33,15 @@ struct RaizVista: View {
         .task(id: sesion.haySesion) {
             if sesion.haySesion { await envios.vaciar() }
         }
+        // Perfiles y filamentos se bajan al entrar y al volver a la app; sin
+        // señal queda la copia guardada y la calculadora sigue sirviendo.
+        .task(id: sesion.haySesion) {
+            if sesion.haySesion { await catalogo.recargar() }
+        }
         .onChange(of: fase) { _, nueva in
             if nueva == .active && sesion.haySesion {
                 Task { await envios.vaciar() }
+                Task { await catalogo.recargar() }
             }
         }
     }
