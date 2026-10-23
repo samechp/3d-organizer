@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>3D Organizer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<header class="barra">
+  <div class="marca">
+    <span class="logo" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4zM3 7v10l9 4 9-4V7M12 11v10"/></svg>
+    </span>
+    <span class="marca-nombre">3D Organizer</span>
+  </div>
+  <div class="sesion" id="zona-sesion" hidden>
+    <span class="sesion-correo" id="correo-sesion"></span>
+    <button type="button" class="boton-secundario" id="boton-salir">Cerrar sesión</button>
+  </div>
+</header>
+
+<!-- Pantalla: entrar -->
+<div id="pantalla-entrar" hidden>
+  <main class="entrar">
+    <form id="form-entrar" novalidate>
+      <h1>Entrar</h1>
+      <p class="ayuda">Usa el correo y la contraseña de tu cuenta de PrintoVerse.</p>
+      <label class="eti"><span class="etiqueta">Correo</span>
+        <input class="campo" id="entrar-correo" type="email" autocomplete="username" required>
+      </label>
+      <label class="eti"><span class="etiqueta">Contraseña</span>
+        <input class="campo" id="entrar-clave" type="password" autocomplete="current-password" required>
+      </label>
+      <div class="mensaje-error" id="entrar-error" role="alert" hidden></div>
+      <button type="submit" class="boton" id="entrar-boton">Entrar</button>
+    </form>
+  </main>
+</div>
+
+<!-- Pantalla: panel de pedidos -->
+<div id="pantalla-panel" class="panel" hidden>
+  <nav class="lateral" aria-label="Pedidos">
+    <button type="button" class="boton" id="boton-nuevo">+ Nuevo pedido</button>
+    <span class="etiqueta" style="padding: 8px 4px 0">Abiertos</span>
+    <ul class="lista" id="lista-abiertos"></ul>
+    <p class="vacio" id="sin-abiertos" hidden>No hay pedidos abiertos.</p>
+    <button type="button" class="boton-enlace" id="boton-terminados" aria-expanded="false" aria-controls="lista-terminados" hidden></button>
+    <ul class="lista" id="lista-terminados" hidden></ul>
+  </nav>
+
+  <main class="principal" id="principal" tabindex="-1">
+    <div class="mensaje-error" id="error-general" role="alert" hidden></div>
+
+    <p class="vacio" id="sin-pedidos" hidden>Todavía no hay pedidos. Crea el primero con «+ Nuevo pedido».</p>
+
+    <div id="detalle" hidden>
+      <div class="cabecera">
+        <div>
+          <h1 id="detalle-nombre" tabindex="-1"></h1>
+          <span class="sub" id="detalle-sub"></span>
+        </div>
+        <div class="acciones">
+          <button type="button" class="boton-secundario" id="boton-editar">Editar pedido</button>
+          <button type="button" class="boton-secundario" id="boton-terminar">Marcar terminado</button>
+        </div>
+      </div>
+      <p class="nota-pedido" id="detalle-nota" hidden></p>
+    </div>
+
+    <section class="caja" id="caja-avance" aria-label="Avance" hidden>
+      <div class="avance-fila">
+        <span class="avance-total" id="avance-total"></span>
+        <span class="insignia" id="avance-ritmo" hidden></span>
+      </div>
+      <div class="barra-avance" id="avance-barra" role="progressbar" aria-label="Avance del pedido"
+           aria-valuemin="0" aria-valuemax="100"><div></div></div>
+      <div class="tarjetas" id="tarjetas"></div>
+    </section>
+
+    <section class="caja" id="caja-tanda" aria-labelledby="titulo-tanda" hidden>
+      <h2 id="titulo-tanda">Anotar tanda</h2>
+      <form class="form-tanda" id="form-tanda" novalidate>
+        <label class="eti c-modelo"><span class="etiqueta">Modelo</span>
+          <select class="campo" id="tanda-modelo"></select>
+        </label>
+        <label class="eti c-cantidad"><span class="etiqueta">Buenas</span>
+          <input class="campo" id="tanda-cantidad" type="number" inputmode="numeric" min="1" max="100000" step="1">
+        </label>
+        <div class="eti c-cuando"><label class="etiqueta" for="tanda-cuando">Fecha y hora</label>
+          <div class="cuando-fila">
+            <input class="campo" id="tanda-cuando" type="datetime-local">
+            <button type="button" class="boton-suave" id="tanda-ahora" hidden>Ahora</button>
+          </div>
+        </div>
+        <div class="c-guardar"><button type="submit" class="boton" id="tanda-guardar">Guardar</button></div>
+      </form>
+      <div class="mensaje-error" id="tanda-error" role="alert" hidden></div>
+      <div class="aviso-tanda" id="aviso-tanda" aria-live="assertive" aria-atomic="true"></div>
+    </section>
+
+    <section class="caja" id="caja-historial" aria-labelledby="titulo-historial" hidden>
+      <h2 id="titulo-historial">Historial</h2>
+      <p class="vacio" id="historial-vacio" hidden>Todavía no hay tandas anotadas.</p>
+      <ul class="historial" id="historial"></ul>
+      <button type="button" class="boton-enlace" id="historial-mas" hidden>Mostrar más</button>
+    </section>
+  </main>
+</div>
+
+<!-- Diálogo: nuevo pedido / editar pedido -->
+<dialog id="dialogo-pedido" aria-labelledby="dialogo-titulo">
+  <form id="form-pedido">
+    <h2 id="dialogo-titulo">Nuevo pedido</h2>
+    <label class="eti"><span class="etiqueta">Nombre del pedido</span>
+      <input class="campo" id="pedido-nombre" type="text" maxlength="120" required>
+    </label>
+    <div class="fila-doble">
+      <label class="eti"><span class="etiqueta">Cliente (opcional)</span>
+        <input class="campo" id="pedido-cliente" type="text" maxlength="120">
+      </label>
+      <label class="eti"><span class="etiqueta">Fecha de entrega (opcional)</span>
+        <input class="campo" id="pedido-entrega" type="date">
+      </label>
+    </div>
+    <label class="eti"><span class="etiqueta">Nota (opcional)</span>
+      <textarea class="campo" id="pedido-nota" maxlength="5000"></textarea>
+    </label>
+    <fieldset>
+      <legend class="etiqueta">Modelos y meta de cada uno</legend>
+      <ol class="filas-modelos" id="filas-modelos"></ol>
+      <button type="button" class="boton-enlace" id="agregar-modelo">+ Agregar modelo</button>
+    </fieldset>
+    <div class="mensaje-error" id="pedido-error" role="alert" hidden></div>
+    <div class="dialogo-botones">
+      <button type="button" class="boton-secundario" id="pedido-cancelar">Cancelar</button>
+      <button type="submit" class="boton" id="pedido-guardar">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Avisos breves para lectores de pantalla y para quien mira -->
+<div class="toast" id="aviso-breve" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -4,7 +4,11 @@ principal.py - Crea la app FastAPI y monta las rutas.
 gunicorn la carga como 'servidor.app.principal:app'.
 """
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from . import acceso, base, fotos, pedidos, perfiles
 
@@ -35,6 +39,13 @@ def crear_app(motor_sistema, motor_usuarios) -> FastAPI:
         except Exception:
             raise HTTPException(status_code=503, detail="La base de datos no responde")
         return {"ok": True}
+
+    # Al final, despues de todas las rutas: un mount en "/" atrapa cualquier
+    # camino que no haya coincidido antes, asi que si fuera primero taparia /api.
+    # Solo con SISTEMA_SERVIR_WEB=1 (uso local): en produccion lo sirve nginx.
+    if os.environ.get("SISTEMA_SERVIR_WEB") == "1":
+        carpeta_web = Path(__file__).resolve().parent.parent / "web"
+        app.mount("/", StaticFiles(directory=carpeta_web, html=True), name="web")
 
     return app
 
