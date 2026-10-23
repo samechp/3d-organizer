@@ -15,6 +15,8 @@ struct DetallePedidoVista: View {
     @State private var mensaje: String? = nil
     @State private var hoja: HojaAnotar? = nil
     @State private var editando = false
+    /// La tanda de "Últimas tandas" que se está corrigiendo.
+    @State private var editandoTanda: Tanda? = nil
     @State private var confirmarTerminar = false
     @State private var cambiandoEstado = false
     /// Sube con cada tanda guardada: dispara la háptica de éxito.
@@ -100,6 +102,10 @@ struct DetallePedidoVista: View {
                     Almacen.guardarDetalle(nuevo)
                 }
             }
+        }
+        // Al guardar o borrar se recarga el pedido para que el avance cambie.
+        .sheet(item: $editandoTanda) { t in
+            EditarTandaVista(tanda: t, alGuardar: { await cargar() }, alBorrar: { await cargar() })
         }
         .confirmationDialog("¿Marcar el pedido como terminado?", isPresented: $confirmarTerminar,
                             titleVisibility: .visible) {
@@ -250,17 +256,31 @@ struct DetallePedidoVista: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(d.ultimasTandas) { t in
-                        HStack {
-                            Text("\(t.modelo) · ") + Text(Formato.num(t.cantidad)).bold()
-                            Spacer()
-                            Text(t.fecha.map { Formato.cuando($0) } ?? "")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                        // Tocar la tanda abre la misma hoja de editar que el
+                        // Historial: así corregir no depende de saber deslizar.
+                        Button {
+                            editandoTanda = t
+                        } label: {
+                            HStack {
+                                Text("\(t.modelo) · ") + Text(Formato.num(t.cantidad)).bold()
+                                Spacer()
+                                Text(t.fecha.map { Formato.cuando($0) } ?? "")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 48)
+                            .contentShape(Rectangle())
                         }
-                        .font(.body)
-                        .padding(.horizontal, 16)
-                        .frame(minHeight: 48)
-                        .accessibilityElement(children: .combine)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(Formato.num(t.cantidad)) de \(t.modelo), "
+                                            + (t.fecha.map { Formato.cuando($0) } ?? ""))
+                        .accessibilityHint("Toca para editar")
                         if t.id != d.ultimasTandas.last?.id {
                             Divider().padding(.leading, 16)
                         }
