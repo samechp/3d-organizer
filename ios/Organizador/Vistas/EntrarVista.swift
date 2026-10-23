@@ -96,6 +96,11 @@ struct EntrarVista: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+            // Toda la fila (también la etiqueta y los márgenes) lleva al campo,
+            // no solo la línea de texto.
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { foco = .correo }
 
             Divider()
                 .padding(.leading, 16)
@@ -116,6 +121,11 @@ struct EntrarVista: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
+            // Toda la fila (también la etiqueta y los márgenes) lleva al campo,
+            // no solo la línea de texto.
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { foco = .clave }
         }
         .background(Color(.secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: Radio.tarjeta, style: .continuous))

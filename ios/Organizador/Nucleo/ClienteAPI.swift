@@ -1,6 +1,7 @@
 // Habla con https://sistema.printoverse.store. El token va en el llavero y se
 // manda como 'Authorization: Bearer'; con Bearer el servidor no pide la
 // cabecera X-Sistema (esa es solo para la cookie de la web).
+// Si la tarea se cancela, los métodos lanzan CancellationError (no ErrorAPI).
 import Foundation
 
 enum ErrorAPI: Error, LocalizedError, Equatable {
@@ -12,6 +13,8 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
     case servidor(String)
     /// La respuesta no tiene la forma esperada.
     case datos
+    /// El iPhone no dejó guardar el token en el llavero.
+    case llavero
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +22,7 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
         case .sinConexion: return "No hay conexión con el servidor. Revisa la señal e inténtalo de nuevo."
         case .servidor(let texto): return texto
         case .datos: return "El servidor respondió algo que la app no entiende."
+        case .llavero: return "No se pudo guardar la sesión en este iPhone. Inténtalo de nuevo."
         }
     }
 }
@@ -77,7 +81,9 @@ final class ClienteAPI {
         let datos = try await pedir("POST", "/api/acceso", json: Credenciales(correo: correo, clave: clave),
                                     conSesion: false)
         let respuesta: RespuestaAcceso = try decodificar(datos)
-        Llavero.guardar(respuesta.token)
+        // Sin token guardado, la próxima petición daría "sin sesión": mejor
+        // decirlo ahora que dejar entrar a medias.
+        guard Llavero.guardar(respuesta.token) else { throw ErrorAPI.llavero }
         return respuesta.token
     }
 
@@ -253,16 +259,21 @@ final class ClienteAPI {
         let token = Llavero.leer()
         if let token { peticion.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if conSesion && token == nil {
-            avisarSesionVencida()
+            avisarSesionVencida(tokenUsado: nil)
             throw ErrorAPI.sinSesion
         }
 
         let resultado: (Data, URLResponse)
         do {
             resultado = try await red.data(for: peticion)
+        } catch is CancellationError {
+            // Cancelar (la vista se fue, se recargó) no es "sin conexión": quien
+            // llama lo ignora en vez de mostrar un error.
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch {
-            // URLError (sin red, timeout, certificado) o la tarea cancelada:
-            // para quien usa la app es lo mismo, no llegó al servidor.
+            // Sin red, timeout, certificado: no llegó al servidor.
             throw ErrorAPI.sinConexion
         }
         let (datos, respuesta) = resultado
@@ -272,7 +283,7 @@ final class ClienteAPI {
         case 200...299:
             return datos
         case 401 where conSesion:
-            avisarSesionVencida()
+            avisarSesionVencida(tokenUsado: token)
             throw ErrorAPI.sinSesion
         case 409 where ruta == "/api/tandas" && metodo == "POST":
             throw ErrorInterno.conflicto(datos)
@@ -289,8 +300,12 @@ final class ClienteAPI {
         }
     }
 
-    private func avisarSesionVencida() {
-        Llavero.borrar()
+    /// Solo cuenta si el token rechazado sigue siendo el del llavero: un 401
+    /// tardío de una petición hecha con el token viejo no debe borrar el
+    /// nuevo de un login que pasó mientras tanto.
+    private func avisarSesionVencida(tokenUsado: String?) {
+        guard Llavero.leer() == tokenUsado else { return }
+        if tokenUsado != nil { Llavero.borrar() }
         NotificationCenter.default.post(name: .sesionVencida, object: nil)
     }
 

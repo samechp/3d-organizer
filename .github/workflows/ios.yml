@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -32,9 +32,11 @@ jobs:
           xcodebuild -version
 
       - name: Probar la lógica pura
+        # El binario va fuera de ios/: en macOS 'pruebas' y la carpeta 'Pruebas/'
+        # son el mismo nombre (no distingue mayúsculas) y el enlazador falla.
         run: |
-          swiftc Organizador/Puro/*.swift Pruebas/main.swift -o pruebas
-          ./pruebas
+          swiftc Organizador/Puro/*.swift Pruebas/main.swift -o "$RUNNER_TEMP/pruebas"
+          "$RUNNER_TEMP/pruebas"
 
       - name: Generar proyecto de Xcode
         run: |

@@ -21,8 +21,10 @@ final class Sesion {
             guard let self else { return }
             // El cierre no está marcado como del hilo principal (aunque la
             // cola sea .main); el cambio de estado tiene que hacerse en él.
+            // Se relee el llavero en vez de poner nil: si justo entró de
+            // nuevo, el token nuevo ya está ahí y no se debe perder.
             Task { @MainActor in
-                self.token = nil
+                self.token = Llavero.leer()
             }
         }
     }

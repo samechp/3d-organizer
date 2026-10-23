@@ -15,7 +15,9 @@ enum Llavero {
         ]
     }
 
-    static func guardar(_ token: String) {
+    /// Devuelve false si el llavero no lo aceptó.
+    @discardableResult
+    static func guardar(_ token: String) -> Bool {
         let datos = Data(token.utf8)
         // Se borra y se vuelve a añadir en vez de actualizar: así no hay que
         // distinguir entre "ya existía" y "es nuevo".
@@ -25,7 +27,7 @@ enum Llavero {
         // AfterFirstUnlock: la app puede leerlo aunque se abra con el iPhone
         // bloqueado (por ejemplo, al reanudarse en segundo plano).
         consulta[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(consulta as CFDictionary, nil)
+        return SecItemAdd(consulta as CFDictionary, nil) == errSecSuccess
     }
 
     static func leer() -> String? {
