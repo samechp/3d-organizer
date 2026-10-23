@@ -7,9 +7,10 @@
 # Se corre como el usuario 'ubuntu' (dueño del clon); lo que necesita permisos
 # usa sudo. Es re-ejecutable: correrlo dos veces seguidas no rompe nada.
 #
-# Si la version nueva no responde, VUELVE SOLA a la anterior: un despliegue que
-# deja el servicio caido es peor que no desplegar.
-set -euo pipefail
+# Si la version nueva no responde, o cualquier paso falla despues de traer el
+# codigo, VUELVE SOLA a la anterior: un despliegue que deja el servicio caido es
+# peor que no desplegar.
+set -Eeuo pipefail
 
 # Este guion vive DENTRO del repositorio que el mismo actualiza, y bash lee los
 # guiones a medida que los ejecuta: el `git reset` de mas abajo le cambia el
@@ -18,9 +19,13 @@ set -euo pipefail
 if [ "${SISTEMA_DESDE_COPIA:-}" != "1" ]; then
   COPIA=$(mktemp /tmp/desplegar-sistema-XXXXXX.sh)
   cp "$0" "$COPIA"
-  trap 'rm -f "$COPIA"' EXIT
+  # Sin trap aqui: 'exec' sustituye este proceso y el trap se perderia. La copia
+  # se borra a si misma al terminar (mas abajo).
   SISTEMA_DESDE_COPIA=1 exec bash "$COPIA" "$@"
 fi
+
+RESPALDO_NGINX=""
+trap 'rm -f "$0" "$RESPALDO_NGINX" "$RESPALDO_NGINX.nuevo"' EXIT
 
 RAMA="${1:-main}"
 BASE=/opt/sistema
@@ -30,6 +35,14 @@ FOTOS=$BASE/fotos
 VENV=$BASE/venv
 SOCKET=/run/sistema/gunicorn.sock
 DESPLIEGUE=$APP/servidor/despliegue
+SITIO=/etc/nginx/sites-available/sistema
+
+# Sin certificado, nginx -t falla con un mensaje de rutas que no dice la causa.
+# Se comprueba AQUI, antes de traer nada: si falta, no hay nada que deshacer.
+if ! sudo test -f /etc/letsencrypt/live/sistema.printoverse.store/fullchain.pem; then
+  echo "  Falta el certificado de sistema.printoverse.store (montar.md, paso 4)."
+  exit 1
+fi
 
 cd "$APP"
 ANTES=$(git rev-parse HEAD)
@@ -49,10 +62,10 @@ fi
 # scripts/ y pruebas/ quedan fuera del alcance del servidor web por
 # construccion, no por una regla que se pueda olvidar.
 #
-# Es una funcion porque la vuelta atras del final tiene que publicar
-# EXACTAMENTE lo mismo. Se vacia antes de copiar para que un fichero retirado
-# del repositorio desaparezca tambien del servidor. Las fotos subidas viven en
-# $FOTOS, aparte, y esto no las toca.
+# Es una funcion porque la vuelta atras tiene que publicar EXACTAMENTE lo
+# mismo. Se vacia antes de copiar para que un fichero retirado del repositorio
+# desaparezca tambien del servidor. Las fotos subidas viven en $FOTOS, aparte, y
+# esto no las toca.
 publicar_ficheros() {
   sudo mkdir -p "$PUB"
   sudo chown "$(id -un):$(id -gn)" "$PUB"
@@ -61,33 +74,58 @@ publicar_ficheros() {
   chmod -R a+rX "$PUB"
 }
 
-# Deshace el despliegue: codigo, dependencias, ficheros publicos y servicio.
-# Cada paso con '|| true': si ya esta fallando, que un segundo fallo no corte la
-# vuelta atras a medias.
+# Pone otra vez la configuracion de nginx que habia antes de este despliegue,
+# solo si pasa 'nginx -t'.
+restaurar_nginx() {
+  [ -s "$RESPALDO_NGINX" ] || return 0
+  sudo cp "$SITIO" "$RESPALDO_NGINX.nuevo"
+  sudo cp "$RESPALDO_NGINX" "$SITIO"
+  if sudo nginx -t >/dev/null 2>&1; then
+    sudo systemctl reload nginx
+  else
+    sudo cp "$RESPALDO_NGINX.nuevo" "$SITIO"
+  fi
+}
+
+# Deshace el despliegue: codigo, dependencias, ficheros publicos, unidad de
+# systemd, nginx y servicio. Cada paso con '|| true': si ya esta fallando, que
+# un segundo fallo no corte la vuelta atras a medias.
 volver_atras() {
   echo "  VOLVIENDO a $(git rev-parse --short "$ANTES")"
   git reset --hard --quiet "$ANTES" || true
   "$VENV/bin/pip" install --quiet -r servidor/requirements.txt || true
   publicar_ficheros || true
+  # La unidad tambien: tras el reset, el fichero del repo es el de la version
+  # anterior; si esta tanda la habia cambiado, hay que dejarla como estaba.
+  sudo cp "$DESPLIEGUE/sistema.service" /etc/systemd/system/sistema.service || true
+  sudo systemctl daemon-reload || true
+  restaurar_nginx || true
+  sudo systemctl reset-failed sistema 2>/dev/null || true
   sudo systemctl restart sistema || true
   echo
   echo "Ultimos registros del intento fallido:"
-  sudo journalctl -u sistema -n 30 --no-pager | sed 's/^/  /' || true
+  { sudo journalctl -u sistema -n 30 --no-pager | sed 's/^/  /'; } || true
 }
 
 fallar() {
+  # Sin esto, un fallo dentro de la vuelta atras la volveria a lanzar.
+  trap - ERR
+  set +e
   echo
   echo "  $1"
   volver_atras
   exit 1
 }
 
+# Desde aqui el codigo nuevo ya esta en disco: CUALQUIER paso que falle
+# (aunque nadie lo haya previsto) tiene que acabar en la vuelta atras, no en un
+# 'set -e' que deja el servicio a medias.
+trap 'fallar "Fallo inesperado (linea $LINENO)"' ERR
+
 echo
 echo "== Dependencias =="
 "$VENV/bin/pip" install --quiet --upgrade pip
-if ! "$VENV/bin/pip" install --quiet -r servidor/requirements.txt; then
-  fallar "No se pudieron instalar las dependencias."
-fi
+"$VENV/bin/pip" install --quiet -r servidor/requirements.txt
 echo "  al dia"
 
 echo
@@ -100,17 +138,8 @@ sudo install -d -o sistema -g sistema -m 750 "$FOTOS"
 
 echo
 echo "== Configuracion del sistema =="
-# Sin certificado, nginx -t falla con un mensaje de rutas que no dice la causa.
-# Mejor avisar de lo que de verdad falta (montar.md, paso 4), y antes de tocar
-# nada de nginx.
-if ! sudo test -f /etc/letsencrypt/live/sistema.printoverse.store/fullchain.pem; then
-  echo "  Falta el certificado de sistema.printoverse.store (montar.md, paso 4)."
-  exit 1
-fi
-sudo cp "$DESPLIEGUE/sistema.service" /etc/systemd/system/sistema.service
 # Se guarda la configuracion de nginx que habia: una rota que se quedara puesta
 # haria fallar tambien el siguiente 'nginx -s reload' de PrintoVerse.
-SITIO=/etc/nginx/sites-available/sistema
 RESPALDO_NGINX=$(mktemp /tmp/nginx-sistema-XXXXXX.conf)
 sudo cp "$SITIO" "$RESPALDO_NGINX" 2>/dev/null || true
 sudo cp "$DESPLIEGUE/nginx-sistema.conf" "$SITIO"
@@ -120,19 +149,17 @@ sudo ln -sfn "$SITIO" /etc/nginx/sites-enabled/sistema
 # configuracion rota pasaria de largo.
 if ! salida_nginx=$(sudo nginx -t 2>&1); then
   echo "$salida_nginx" | sed 's/^/  /'
-  echo
   if [ -s "$RESPALDO_NGINX" ]; then
     sudo cp "$RESPALDO_NGINX" "$SITIO"
-    echo "  La configuracion de nginx no es valida. Se dejo la anterior."
   else
     sudo rm -f /etc/nginx/sites-enabled/sistema "$SITIO"
-    echo "  La configuracion de nginx no es valida. Se quito para no romper nginx."
   fi
-  rm -f "$RESPALDO_NGINX"
-  exit 1
+  fallar "La configuracion de nginx no es valida (se dejo la que habia)."
 fi
-rm -f "$RESPALDO_NGINX"
 echo "$salida_nginx" | sed 's/^/  /'
+# La unidad se instala solo ahora, con nginx ya comprobado: si arriba algo falla,
+# no queda a medias una mitad nueva y otra vieja.
+sudo cp "$DESPLIEGUE/sistema.service" /etc/systemd/system/sistema.service
 sudo systemctl daemon-reload
 
 echo
@@ -161,7 +188,9 @@ sudo systemctl reset-failed sistema 2>/dev/null || true
 # 'enable' y no solo 'restart': sin el, el servicio corre pero no vuelve solo
 # despues de reiniciar la maquina.
 sudo systemctl enable sistema >/dev/null 2>&1 || true
-sudo systemctl restart sistema
+# Un 'restart' que falla no se trata aparte: la comprobacion de abajo decide, y
+# asi el fallo acaba en la vuelta atras con los registros a la vista.
+sudo systemctl restart sistema || true
 sudo systemctl reload nginx
 
 # El servicio puede quedar "active" y aun asi devolver 500 en cada peticion, asi
@@ -179,7 +208,7 @@ echo
 
 if [ "$sano" = "1" ]; then
   echo "  responde"
-  curl -s --unix-socket "$SOCKET" http://localhost/health | head -c 200
+  { curl -s --unix-socket "$SOCKET" http://localhost/health | head -c 200; } || true
   echo
   echo
   echo "DESPLEGADO  $(git rev-parse --short HEAD)"

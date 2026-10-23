@@ -11,7 +11,8 @@ Reglas del guion:
 
 - Los bloques empiezan con `set -euo pipefail`: para que un error no cierre la
   sesion SSH, guardar cada bloque como un fichero y enviarlo con
-  `ssh ... 'bash -s' < bloque.sh` (o pegarlo dentro de `bash -c '...'`).
+  `ssh ... 'bash -s' < bloque.sh` (o con un heredoc entre comillas:
+  `ssh ... 'bash -s' <<'FIN'` ... `FIN`).
 - Se sigue **en orden**. Los pasos 1 a 4 se pueden repetir sin romper nada; cada
   uno dice como.
 - Las contrasenas se generan **en el servidor** y no salen de ahi: ningun
@@ -93,7 +94,7 @@ set -euo pipefail
 CORREO_PERMITIDO='PON_AQUI_EL_CORREO_DE_JUAN'
 case "$CORREO_PERMITIDO" in *@*.*) ;; *) echo "Falta poner el correo"; exit 1 ;; esac
 
-if sudo test -f /opt/sistema/.env; then
+if sudo test -s /opt/sistema/.env; then
   echo "/opt/sistema/.env ya existe: no se toca nada (para rehacerlo ver 'Si algo sale mal')"
 else
   # Nombre de la base de PrintoVerse: se lee aqui y no se imprime.
@@ -131,16 +132,19 @@ SQL
   MYSQL_PWD="$PW_SISTEMA" mariadb -h 127.0.0.1 -u sistema sistema -N -e "SELECT 'sistema: conecta'"
   MYSQL_PWD="$PW_LEE" mariadb -h 127.0.0.1 -u sistema_lee -N -e "SELECT COUNT(*) FROM \`$PRINTO_DB\`.usuarios" >/dev/null && echo "sistema_lee: puede leer usuarios"
 
-  # El .env: se crea vacio con permisos 600 ANTES de escribir nada dentro.
-  sudo touch /opt/sistema/.env
-  sudo chown sistema:sistema /opt/sistema/.env
-  sudo chmod 600 /opt/sistema/.env
-  sudo tee /opt/sistema/.env >/dev/null <<ENV
+  # El .env: se escribe en un fichero NUEVO (creado vacio con permisos 600 ANTES
+  # de escribir nada dentro) y solo al terminar se pone en su sitio. Asi un corte
+  # a medias no deja un /opt/sistema/.env vacio que bloquee las repeticiones.
+  sudo touch /opt/sistema/.env.nuevo
+  sudo chown sistema:sistema /opt/sistema/.env.nuevo
+  sudo chmod 600 /opt/sistema/.env.nuevo
+  sudo tee /opt/sistema/.env.nuevo >/dev/null <<ENV
 SISTEMA_DB_URL=mysql+pymysql://sistema:${PW_SISTEMA}@localhost/sistema?charset=utf8mb4
 PRINTO_USUARIOS_URL=mysql+pymysql://sistema_lee:${PW_LEE}@localhost/${PRINTO_DB}?charset=utf8mb4
 SISTEMA_CORREO_PERMITIDO=${CORREO_PERMITIDO}
 SISTEMA_FOTOS=/opt/sistema/fotos
 ENV
+  sudo mv -f /opt/sistema/.env.nuevo /opt/sistema/.env
 
   unset PW_SISTEMA PW_LEE PRINTO_DB COLUMNAS
 fi
@@ -191,7 +195,9 @@ server {
 }
 NGINX
   sudo ln -sfn /etc/nginx/sites-available/sistema /etc/nginx/sites-enabled/sistema
-  sudo nginx -t
+  # Si la configuracion temporal no es valida se quita: dejarla puesta haria
+  # fallar tambien las recargas de nginx y las renovaciones de PrintoVerse.
+  sudo nginx -t || { sudo rm -f /etc/nginx/sites-enabled/sistema /etc/nginx/sites-available/sistema; echo "nginx -t fallo; se quito el temporal"; exit 1; }
   sudo systemctl reload nginx
 
   # Prueba: un fichero de prueba debe verse desde fuera por HTTP. Si no da 200,
