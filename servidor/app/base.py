@@ -52,7 +52,9 @@ sesiones = Table(
     "sesiones", metadata,
     Column("token_hash", CHAR(64), primary_key=True),
     Column("correo", String(120), nullable=False),
-    Column("creada", DateTime, nullable=False, server_default=func.now()),
+    # Sin server_default: now() de MySQL va en la hora del servidor, y acceso.py
+    # compara todo en UTC. Cada insert pasa su valor UTC explicito.
+    Column("creada", DateTime, nullable=False),
     Column("expira", DateTime, nullable=False),
 )
 
@@ -61,7 +63,9 @@ intentos = Table(
     "intentos", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("ip", String(45), nullable=False),  # 45 = IPv6 en texto, el caso mas largo
-    Column("momento", DateTime, nullable=False, server_default=func.now()),
+    # Sin server_default, por lo mismo que sesiones.creada: el momento lo pone
+    # acceso.py en UTC.
+    Column("momento", DateTime, nullable=False),
     # Cada login cuenta los fallos de una IP en la ultima ventana: sin este
     # indice seria recorrer toda la tabla en cada intento.
     Index("ix_intentos_ip_momento", "ip", "momento"),

@@ -4,3 +4,4 @@ pymysql
 python-multipart
 gunicorn
 uvicorn[standard]
+tzdata

@@ -6,7 +6,7 @@ gunicorn la carga como 'servidor.app.principal:app'.
 
 from fastapi import FastAPI, HTTPException
 
-from . import acceso, base
+from . import acceso, base, pedidos
 
 
 def crear_app(motor_sistema, motor_usuarios) -> FastAPI:
@@ -22,6 +22,7 @@ def crear_app(motor_sistema, motor_usuarios) -> FastAPI:
     app.state.motor_usuarios = motor_usuarios
 
     app.include_router(acceso.router)
+    app.include_router(pedidos.router)
 
     @app.get("/health")
     def health():
