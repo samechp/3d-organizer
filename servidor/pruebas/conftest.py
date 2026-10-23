@@ -50,7 +50,11 @@ def motores(monkeypatch):
         Column("debe_cambiar", Integer),
     )
     usuarios.metadata.create_all(motor_usuarios)
-    return motor_sistema, motor_usuarios
+    yield motor_sistema, motor_usuarios
+    # Cerrar las conexiones SQLite: sin esto Python avisa (ResourceWarning) al
+    # recoger la base en memoria, y el aviso ensucia la salida de pytest.
+    motor_sistema.dispose()
+    motor_usuarios.dispose()
 
 
 @pytest.fixture

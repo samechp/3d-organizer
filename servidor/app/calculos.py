@@ -9,6 +9,10 @@ from datetime import date, timedelta
 from math import ceil
 
 
+# Dos tandas iguales separadas por mas que esto se consideran distintas.
+VENTANA_PARECIDA = timedelta(hours=3)
+
+
 def avance(modelos: list[tuple[int, int]]) -> dict:
     """Resume el avance de un pedido a partir de (hechas, meta) de cada modelo.
 
@@ -50,7 +54,7 @@ def ritmo(faltan: int, entrega: date | None, hoy: date) -> dict | None:
 
 
 def es_parecida(nueva_cant: int, nueva_cuando, previa_cant: int, previa_cuando,
-                ventana: timedelta = timedelta(hours=3)) -> bool:
+                ventana: timedelta = VENTANA_PARECIDA) -> bool:
     """True si una tanda se parece a otra: misma cantidad y muy cerca en el tiempo.
 
     Es el aviso de "¿ya la anotaste?": tocar dos veces el boton o anotar desde

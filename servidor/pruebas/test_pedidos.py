@@ -273,6 +273,9 @@ def test_cantidad_en_los_limites(cliente_con_sesion):
     {"cuando": "ayer"},
     {"cuando": 1700000000},
     {"cuando": "0001-01-01T00:00:00"},
+    # En los bordes del calendario, convertir de zona desborda datetime.
+    {"cuando": "0001-01-01T00:00:00+05:00"},
+    {"cuando": "9999-12-31T23:00:00-05:00"},
     {"modelo_id": 0},
     {"modelo_id": 10**30},
 ])
@@ -317,6 +320,8 @@ def test_borrar_y_editar_tanda(cliente_con_sesion):
     assert c.patch(f"/api/tandas/{t['id']}", json={}).json()["cantidad"] == 60
     assert c.patch(f"/api/tandas/{t['id']}", json={"cantidad": 0}).status_code == 422
     assert c.patch(f"/api/tandas/{t['id']}", json={"cantidad": None}).status_code == 422
+    for cuando in ("0001-01-01T00:00:00+05:00", "9999-12-31T23:00:00-05:00"):
+        assert c.patch(f"/api/tandas/{t['id']}", json={"cuando": cuando}).status_code == 422
 
     r = c.delete(f"/api/tandas/{t['id']}")
     assert r.status_code == 204 and r.content == b""

@@ -71,7 +71,13 @@ def _cuando_a_bogota(valor: datetime) -> datetime:
     # Con zona se convierte a Bogota; sin zona se toma como Bogota (asi la
     # escribe quien teclea la hora a mano en la web).
     if valor.tzinfo is not None:
-        valor = valor.astimezone(BOGOTA).replace(tzinfo=None)
+        try:
+            valor = valor.astimezone(BOGOTA).replace(tzinfo=None)
+        except OverflowError:
+            # En los extremos del calendario (año 1, año 9999) convertir de zona se
+            # sale de lo que datetime soporta; Pydantic solo traduce ValueError a
+            # 422, y un OverflowError seria un 500.
+            raise ValueError("Fecha fuera de rango")
     return _en_rango(valor.replace(microsecond=0))
 
 
@@ -436,15 +442,20 @@ def crear_tanda(datos: TandaNueva, request: Request, response: Response):
             cuando = datos.cuando or ahora_bogota()
 
             if not datos.forzar:
-                previas = con.execute(
+                # La ventana se acota en SQL para no traer todas las tandas de esa
+                # cantidad; la mas reciente dentro de ella es la que Juan recuerda
+                # haber anotado. es_parecida confirma con la misma regla de siempre.
+                candidata = con.execute(
                     select(base.tandas.c.id, base.tandas.c.cantidad, base.tandas.c.cuando)
                     .where(base.tandas.c.modelo_id == datos.modelo_id,
-                           base.tandas.c.cantidad == datos.cantidad)
+                           base.tandas.c.cantidad == datos.cantidad,
+                           base.tandas.c.cuando.between(
+                               cuando - calculos.VENTANA_PARECIDA, cuando + calculos.VENTANA_PARECIDA))
                     .order_by(base.tandas.c.cuando.desc(), base.tandas.c.id.desc())
-                ).all()
-                # La mas reciente que se parezca: es la que Juan recuerda haber anotado.
-                parecida = next((p for p in previas if calculos.es_parecida(
-                    datos.cantidad, cuando, p.cantidad, p.cuando)), None)
+                    .limit(1)
+                ).first()
+                parecida = candidata if candidata and calculos.es_parecida(
+                    datos.cantidad, cuando, candidata.cantidad, candidata.cuando) else None
                 if parecida:
                     return JSONResponse(status_code=409, content={"parecida": {
                         "id": parecida.id, "cantidad": parecida.cantidad,
