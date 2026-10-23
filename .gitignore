@@ -1,0 +1,10 @@
+.env
+*.p8
+perfiles.json
+__pycache__/
+.venv/
+ios/*.xcodeproj
+build/
+.DS_Store
+.superpowers/
+*.db
