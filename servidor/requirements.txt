@@ -1,7 +1,13 @@
-fastapi
-sqlalchemy>=2
-pymysql
-python-multipart
-gunicorn
-uvicorn[standard]
-tzdata
+# Versiones exactas, las mismas con las que pasan las pruebas: un despliegue
+# no debe traer de sorpresa una versión nueva que cambie el comportamiento.
+# Para actualizar: subir aquí, correr las pruebas y desplegar.
+fastapi==0.161.1
+starlette==1.9.0
+pydantic==2.14.1
+pydantic-core==2.50.1
+sqlalchemy==2.1.6
+pymysql==1.2.3
+python-multipart==0.0.32
+gunicorn==26.2.0
+uvicorn[standard]==0.54.0
+tzdata==2026.5

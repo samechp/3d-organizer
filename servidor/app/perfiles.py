@@ -41,7 +41,7 @@ def _a_centavos(valor: float) -> float:
     return round(valor, 2)
 
 
-# strict: que 655 sea un numero y no "655" ni true. Los textos con numeros los
+# strict: que 800 sea un numero y no "800" ni true. Los textos con numeros los
 # convierte quien llama (el importador), no esta API.
 Dinero = Annotated[float, Field(strict=True, ge=0, le=MAX_DINERO, allow_inf_nan=False),
                    AfterValidator(_a_centavos)]

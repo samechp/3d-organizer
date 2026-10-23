@@ -8,8 +8,8 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"datos-de-prueba" * 10
 JPG = b"\xff\xd8\xff\xe0" + b"datos-de-prueba" * 10
 
 PERFIL = {
-    "nombre": "AD5M Casa", "precio_kwh": 655, "consumo_watts": 350,
-    "vida_maquina_h": 5000, "precio_repuestos": 150000, "margen_error": 30,
+    "nombre": "AD5M Casa", "precio_kwh": 800, "consumo_watts": 300,
+    "vida_maquina_h": 4000, "precio_repuestos": 120000, "margen_error": 20,
 }
 
 
@@ -43,8 +43,8 @@ def test_perfiles_crud(cliente_con_sesion):
     assert r.status_code == 201
     primero = r.json()
     assert primero == {
-        "id": primero["id"], "nombre": "AD5M Casa", "precio_kwh": 655.0, "consumo_watts": 350.0,
-        "vida_maquina_h": 5000.0, "precio_repuestos": 150000.0, "margen_error": 30.0,
+        "id": primero["id"], "nombre": "AD5M Casa", "precio_kwh": 800.0, "consumo_watts": 300.0,
+        "vida_maquina_h": 4000.0, "precio_repuestos": 120000.0, "margen_error": 20.0,
         "precio_dolar": 4000.5, "activo": True,
     }
     # Numeros de verdad en el JSON, no textos.
@@ -127,7 +127,7 @@ def test_perfil_inexistente_404(cliente_con_sesion):
     {"margen_error": -1},
     {"margen_error": 1000.01},
     {"precio_dolar": -1},
-    {"precio_kwh": "655"},          # los numeros llegan como numeros
+    {"precio_kwh": "800"},          # los numeros llegan como numeros
     {"precio_kwh": True},
     {"precio_kwh": 1e15},           # no cabe en Numeric(14,2)
     {"precio_kwh": None},
@@ -152,7 +152,7 @@ def test_perfil_margen_en_los_limites(cliente_con_sesion):
 # Filamentos
 # ---------------------------------------------------------------------------
 
-FILAMENTO = {"marca": "CoLiDo", "tipo": "PLA", "color": "Black", "precio_kg": 70000, "moneda": "COP"}
+FILAMENTO = {"marca": "CoLiDo", "tipo": "PLA", "color": "Black", "precio_kg": 80000, "moneda": "COP"}
 
 
 def test_filamentos_crud(cliente_con_sesion):
@@ -162,7 +162,7 @@ def test_filamentos_crud(cliente_con_sesion):
     assert r.status_code == 201
     f = r.json()
     assert f == {"id": f["id"], "marca": "CoLiDo", "tipo": "PLA", "color": "Black",
-                 "hex": "#1b1b1b", "precio_kg": 70000.0, "moneda": "COP"}
+                 "hex": "#1b1b1b", "precio_kg": 80000.0, "moneda": "COP"}
     # hex es opcional.
     sin_hex = c.post("/api/filamentos", json={**FILAMENTO, "color": "White", "moneda": "USD"}).json()
     assert sin_hex["hex"] is None and sin_hex["moneda"] == "USD"
@@ -185,7 +185,7 @@ def test_filamentos_crud(cliente_con_sesion):
     {"hex": "#GGGGGG"},
     {"hex": "1b1b1b"},
     {"precio_kg": -1},
-    {"precio_kg": "70000"},
+    {"precio_kg": "80000"},
     {"marca": ""},
     {"marca": "x" * 61},
     {"tipo": "x" * 31},

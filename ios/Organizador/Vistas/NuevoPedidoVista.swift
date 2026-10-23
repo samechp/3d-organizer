@@ -88,7 +88,7 @@ struct NuevoPedidoVista: View {
             Form {
                 Section {
                     LabeledContent("Nombre") {
-                        TextField("Llaveros Ofero", text: $nombre)
+                        TextField("Ej.: Llaveros empresa X", text: $nombre)
                             .multilineTextAlignment(.trailing)
                             .accessibilityLabel("Nombre")
                     }

@@ -209,7 +209,7 @@ enum Formato {
         return "Faltan \(num(m.faltan))"
     }
 
-    /// Iniciales para el recuadro sin foto: "Prof Completo" -> "PC".
+    /// Iniciales para el recuadro sin foto: "Medalla oro" -> "MO".
     static func iniciales(_ nombre: String) -> String {
         let letras = nombre.split(separator: " ").prefix(2).compactMap { $0.first }
         return letras.isEmpty ? "?" : String(letras).uppercased()

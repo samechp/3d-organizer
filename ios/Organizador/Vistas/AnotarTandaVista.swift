@@ -385,7 +385,7 @@ struct AnotarTandaVista: View {
         }
     }
 
-    /// "Hace 40 minutos ya anotaste 50 de Prof Completo (hoy, 3:02 p. m.)."
+    /// "Hace 40 minutos ya anotaste 50 de Medalla oro (hoy, 3:02 p. m.)."
     private func textoAviso(cantidad: Int, modelo: String, previa: Date?, minutos: Int) -> String {
         let cuandoPrevia = previa.map { " (\(Formato.dia($0).lowercased()), \(Formato.hora($0)))" } ?? ""
         let que = "\(Formato.num(cantidad)) de \(modelo)"

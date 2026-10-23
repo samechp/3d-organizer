@@ -174,7 +174,7 @@ final class Catalogo {
             return nil
         case .sinConexion:
             return "Sin conexión con el servidor." + guardados
-        case .servidor(let texto), .noExiste(let texto):
+        case .servidor(let texto), .noExiste(let texto), .temporal(let texto):
             return texto + guardados
         case .datos, .llavero:
             return (e.errorDescription ?? "No se pudieron actualizar los datos.") + guardados

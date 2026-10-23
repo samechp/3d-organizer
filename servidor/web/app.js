@@ -681,7 +681,15 @@ async function guardarTanda(forzar) {
     dibujarAviso();
     ponerCuandoAhora();
     anunciar(`Tanda guardada: ${num(cantidad)} de ${nombreDelModelo(modeloId)}`);
-    await refrescar();
+    // La tanda ya quedó en el servidor: si lo que falla es volver a pedir la
+    // lista, decir "No hay conexión" haría pensar que no se guardó y anotarla otra vez.
+    try {
+      await refrescar();
+    } catch (e) {
+      if (!(e instanceof ErrorApi && e.estado === 401)) {
+        mostrarError('tanda-error', 'Guardada, pero no se pudo actualizar la lista. Recarga la página en un momento.');
+      }
+    }
     porId('tanda-cantidad').focus();
   } catch (e) {
     if (e instanceof ErrorApi && e.estado === 409 && e.cuerpo && e.cuerpo.parecida) {
@@ -801,8 +809,15 @@ async function borrarTanda(t) {
   mostrarError('error-general', '');
   try {
     await pedir('DELETE', `/api/tandas/${t.id}`);
-    await refrescar();
     anunciar('Tanda borrada');
+    // Igual que al guardar: ya se borró, lo que falló es solo actualizar la lista.
+    try {
+      await refrescar();
+    } catch (e) {
+      if (!(e instanceof ErrorApi && e.estado === 401)) {
+        mostrarError('error-general', 'Borrada, pero no se pudo actualizar la lista. Recarga la página en un momento.');
+      }
+    }
   } catch (e) {
     // Si ya no existía (404) igual se refresca para que desaparezca de la lista.
     if (e instanceof ErrorApi && e.estado === 404) { try { await refrescar(); } catch (_) { /* nada */ } }
@@ -865,6 +880,10 @@ function quitarFila(fila) {
   } else {
     fila.quitar = true;
     fila.li.hidden = true;
+    // Un campo oculto con required (o fuera de min/max) frena el envío del
+    // formulario sin mostrar nada. Deshabilitado, el navegador no lo valida.
+    fila.nombre.disabled = true;
+    fila.meta.disabled = true;
   }
   const visibles = d.filas.filter((f) => !f.quitar);
   (visibles[Math.max(0, posicion - 1)] || visibles[0]).nombre.focus();

@@ -195,7 +195,7 @@ ios/
   - `test_foto_png_valida_y_lectura_con_sesion`
   - `test_foto_que_no_es_imagen_415`
   - `test_nombre_de_foto_con_puntos_404` (`../.env`)
-  - `test_importar_mapea_ad5m_casa`: un `perfiles.json` de prueba hecho dentro de la prueba con `precioKwh:'655'`, … → perfil con `precio_kwh=655`. Usa un cliente HTTP falso inyectado.
+  - `test_importar_mapea_ad5m_casa`: un `perfiles.json` de prueba hecho dentro de la prueba con `precioKwh:'800'`, … → perfil con `precio_kwh=800`. Usa un cliente HTTP falso inyectado.
   - `test_importar_dos_veces_no_duplica`
 - [ ] **Step 2:** Correr. Esperado: FALLAN.
 - [ ] **Step 3:** Implementar.
@@ -261,11 +261,11 @@ ios/
   - `func calcular(_ e: EntradaCalculo, perfil: Perfil) -> ResultadoCalculo`, con los campos `costoBaseCama, cobrarCama, precioPieza, costoPieza, gananciaPieza, horasConMargen, gramosConMargen, gramos`.
   - La ganancia usa el precio ya redondeado: `precioPieza − costoPieza − insumos/u`. Si `insumosACobrar` es nil o ≤ 0, se cobra `insumos`.
 
-- [ ] **Step 1:** Pruebas en `Pruebas/main.swift` con el perfil AD5M Casa (655, 350, 5000, 150000, 30) y PLA a 70000. Son valores de referencia calculados con la fórmula de escritorio, con tolerancia 0,01:
-  - 150 min, 60 g, 20 por cama, ×3, sin redondeo → `costoBaseCama 6302.5625`, `cobrarCama 18907.6875`, `precioPieza 945.384375`, `costoPieza 315.128125`, `gananciaPieza 630.25625`, `horasConMargen 3.25`, `gramosConMargen 78`.
-  - Lo mismo con insumos 2000 y a cobrar 3000 → `cobrarCama 21907.6875`, `gananciaPieza 680.25625`.
-  - Insumos 2000 sin "a cobrar" → `cobrarCama 20907.6875`.
-  - Con una parte extra de 60 min y 20 g → `costoBaseCama 8459.5875`, `precioPieza 1268.938125`, `horasConMargen 4.55`.
+- [ ] **Step 1:** Pruebas en `Pruebas/main.swift` con un perfil inventado (800, 300, 4000, 120000, 20) y PLA a 80000 (el repo es público: nada de datos reales). Son valores calculados con la fórmula de escritorio, con tolerancia 0,01:
+  - 150 min, 60 g, 20 por cama, ×3, sin redondeo → `costoBaseCama 6570`, `cobrarCama 19710`, `precioPieza 985.5`, `costoPieza 328.5`, `gananciaPieza 657`, `horasConMargen 3`, `gramosConMargen 72`.
+  - Lo mismo con insumos 2000 y a cobrar 3000 → `cobrarCama 22710`, `gananciaPieza 707`.
+  - Insumos 2000 sin "a cobrar" → `cobrarCama 21710`.
+  - Con una parte extra de 60 min y 20 g → `costoBaseCama 8814`, `precioPieza 1322.1`, `horasConMargen 4.2`.
   - Redondeo `.a500` del primer caso → `precioPieza 1000`.
 - [ ] **Step 2:** Correr `swiftc ios/Organizador/Nucleo/Calculo.swift ios/Pruebas/main.swift -o pruebas && ./pruebas` (en CI, Task 8). En Windows no hay swiftc: la primera corrida es la de CI.
 - [ ] **Step 3:** Implementar `Calculo.swift`.

@@ -11,6 +11,10 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
     case sinConexion
     /// El servidor contestó con un error; el texto ya viene listo para mostrar.
     case servidor(String)
+    /// 5xx, 408 o 429: el servidor contestó, pero es un problema pasajero
+    /// (falla interna, demasiadas peticiones). Va aparte de .servidor para que
+    /// la cola sin señal guarde la tanda y la reintente en vez de botarla.
+    case temporal(String)
     /// 404: lo que se pidió ya no existe (lo borraron, por ejemplo desde la
     /// web). Va aparte para que quien borra lo tome como "ya estaba borrado".
     case noExiste(String)
@@ -24,6 +28,7 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
         case .sinSesion: return "La sesión se cerró. Vuelve a entrar."
         case .sinConexion: return "No hay conexión con el servidor. Revisa la señal e inténtalo de nuevo."
         case .servidor(let texto): return texto
+        case .temporal(let texto): return texto
         case .noExiste(let texto): return texto
         case .datos: return "El servidor respondió algo que la app no entiende."
         case .llavero: return "No se pudo guardar la sesión en este iPhone. Inténtalo de nuevo."
@@ -301,6 +306,10 @@ final class ClienteAPI {
             throw ErrorAPI.sinConexion
         case 404:
             throw ErrorAPI.noExiste(ClienteAPI.textoDeError(datos, codigo: 404))
+        case 408, 429, 500...599:
+            // Reintentar más tarde puede salir bien; el texto (ej. "Demasiados
+            // intentos" del 429 al entrar) se sigue mostrando tal cual.
+            throw ErrorAPI.temporal(ClienteAPI.textoDeError(datos, codigo: http.statusCode))
         default:
             throw ErrorAPI.servidor(ClienteAPI.textoDeError(datos, codigo: http.statusCode))
         }

@@ -208,7 +208,12 @@ struct HistorialVista: View {
 
     private func borrar(_ t: Tanda) async {
         do {
-            try await ClienteAPI.compartido.borrarTanda(id: t.id)
+            do {
+                try await ClienteAPI.compartido.borrarTanda(id: t.id)
+            } catch ErrorAPI.noExiste {
+                // Ya estaba borrada (desde la web o un intento anterior): el
+                // resultado es el que se buscaba, así que se quita de la lista.
+            }
             tandas.removeAll { $0.id == t.id }
             Almacen.guardarTandas(tandas, pedidoId: pedidoId)
             UIAccessibility.post(notification: .announcement, argument: "Tanda borrada")

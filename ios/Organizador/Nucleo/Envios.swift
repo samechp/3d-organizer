@@ -119,14 +119,18 @@ final class Envios {
             return .detener
         } catch let error as ErrorAPI {
             switch error {
-            case .sinConexion, .sinSesion, .llavero:
+            case .sinConexion, .sinSesion, .llavero, .temporal:
                 // La sesión vencida no borra nada: al volver a entrar se manda.
+                // Un 5xx o un 429 tampoco: el servidor está mal un rato, la
+                // tanda no; se queda en la cola para el próximo vaciado.
                 return .detener
             case .datos:
                 // enviarTanda ya toma un 2xx ilegible como guardada; un .datos
                 // aquí es de antes de mandar y reintentar no lo arregla.
                 return .descartar("La app no pudo armar el envío de esta tanda.")
             case .servidor(let texto), .noExiste(let texto):
+                // Solo un 4xx de verdad (400, 403, 404, 422...): reenviar la
+                // misma tanda daría el mismo rechazo.
                 return .descartar(texto)
             }
         } catch {

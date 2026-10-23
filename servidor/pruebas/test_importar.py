@@ -48,15 +48,15 @@ def _datos():
     return {
         "profiles": {
             "AD5M Casa": {
-                "precioKg": "", "monedaFilamento": "COP", "precioKwh": "655", "consumoWatts": "350",
-                "desgasteMaquina": "5000", "precioRepuestos": "150000", "monedaRepuestos": "COP",
-                "manoObraHora": "20000", "margenError": "30", "precioDolar": "",
+                "precioKg": "", "monedaFilamento": "COP", "precioKwh": "800", "consumoWatts": "300",
+                "desgasteMaquina": "4000", "precioRepuestos": "120000", "monedaRepuestos": "COP",
+                "manoObraHora": "20000", "margenError": "20", "precioDolar": "",
             },
             "Otro perfil": {"precioKwh": "1"},
         },
         "filamentos": [
             {"id": "fil_1", "marca": "CoLiDo", "color": "Black", "tipo": "PLA",
-             "precio": 70000, "moneda": "COP", "hex": "#1b1b1b"},
+             "precio": 80000, "moneda": "COP", "hex": "#1b1b1b"},
             {"id": "fil_2", "marca": "CoLiDo", "color": "Clear", "tipo": "PLA",
              "precio": 72000.5, "moneda": "COP", "hex": "transparente"},
             {"id": "fil_3", "marca": "Sunlu", "color": "Red", "tipo": "PETG",
@@ -76,13 +76,13 @@ def test_importar_mapea_ad5m_casa():
     resumen = _importar(http)
 
     assert http.perfiles == [{
-        "id": 1, "nombre": "AD5M Casa", "precio_kwh": 655.0, "consumo_watts": 350.0,
-        "vida_maquina_h": 5000.0, "precio_repuestos": 150000.0, "margen_error": 30.0,
+        "id": 1, "nombre": "AD5M Casa", "precio_kwh": 800.0, "consumo_watts": 300.0,
+        "vida_maquina_h": 4000.0, "precio_repuestos": 120000.0, "margen_error": 20.0,
         "precio_dolar": None,
     }]
     assert http.filamentos[0] == {
         "id": 1, "marca": "CoLiDo", "tipo": "PLA", "color": "Black",
-        "hex": "#1b1b1b", "precio_kg": 70000.0, "moneda": "COP",
+        "hex": "#1b1b1b", "precio_kg": 80000.0, "moneda": "COP",
     }
     # 'transparente' no es un color #RRGGBB: se omite en vez de hacer fallar el alta.
     assert "hex" not in http.filamentos[1] and http.filamentos[1]["precio_kg"] == 72000.5
