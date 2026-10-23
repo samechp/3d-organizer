@@ -144,8 +144,12 @@ struct CalculadoraVista: View {
         return catalogo.filamentos.first
     }
 
+    /// Todo número escrito pasa por aquí, acotado: un número pegado de 20
+    /// cifras haría caer la app al convertirlo a Int.
+    private static let tope: Double = 1e9
+
     private func numero(_ texto: String) -> Double {
-        max(0, Formato.leerNumero(texto) ?? 0)
+        min(max(0, Formato.leerNumero(texto) ?? 0), CalculadoraVista.tope)
     }
 
     private func totalMinutos(_ horas: String, _ minutos: String) -> Double {
@@ -159,7 +163,8 @@ struct CalculadoraVista: View {
         }
     }
 
-    private var unidades: Double { max(1, numero(datos.unidades)) }
+    /// Es un conteo de piezas: entero y al menos 1, el mismo para la fórmula y para "Por cama (N)".
+    private var unidades: Int { max(1, Int(numero(datos.unidades).rounded())) }
 
     private var resultado: ResultadoCalculo? {
         guard let elegido = perfil else { return nil }
@@ -171,10 +176,10 @@ struct CalculadoraVista: View {
             partes: datos.partes.map {
                 ParteExtra(minutos: totalMinutos($0.horas, $0.minutos), filamentos: usos($0.filamentos, perfil: elegido))
             },
-            unidadesCama: unidades,
+            unidadesCama: Double(unidades),
             margenGanancia: numero(datos.margen),
             insumos: datos.conInsumos ? numero(datos.insumos) : 0,
-            insumosACobrar: datos.conInsumos ? Formato.leerNumero(datos.insumosACobrar) : nil,
+            insumosACobrar: datos.conInsumos ? Formato.leerNumero(datos.insumosACobrar).map { min($0, CalculadoraVista.tope) } : nil,
             redondeo: datos.redondeo.redondeo)
         return calcular(entrada, perfil: elegido.calculo)
     }
@@ -248,19 +253,20 @@ struct CalculadoraVista: View {
     }
 
     private func precioCama(_ r: ResultadoCalculo, alineacion: HorizontalAlignment) -> some View {
-        let n = Int(unidades.rounded())
+        let n = unidades
+        let total = r.precioPieza * Double(n)
         // Lo que se cobra por la cama entera: el precio de cada pieza (ya
         // redondeado) por las que caben.
         return VStack(alignment: alineacion, spacing: 2) {
             Text("Por cama (\(Formato.num(n)))")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(Formato.pesos(r.precioPieza * unidades))
+            Text(Formato.pesos(total))
                 .font(.title3.weight(.semibold))
                 .monospacedDigit()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Por cama de \(Formato.num(n)) \(Formato.plural(n, "pieza", "piezas")): \(Formato.pesos(r.precioPieza * unidades))")
+        .accessibilityLabel("Por cama de \(Formato.num(n)) \(Formato.plural(n, "pieza", "piezas")): \(Formato.pesos(total))")
     }
 
     private func dato(_ titulo: String, _ valor: String, color: Color = .primary) -> some View {

@@ -76,13 +76,6 @@ final class Catalogo {
         }
     }
 
-    /// Al cerrar sesión: lo de esta cuenta no se queda en memoria.
-    func olvidar() {
-        perfiles = []
-        filamentos = []
-        aviso = nil
-    }
-
     // MARK: - Perfiles
 
     func activar(_ perfil: Perfil) async throws {

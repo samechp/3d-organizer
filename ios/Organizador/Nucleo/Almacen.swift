@@ -89,14 +89,13 @@ enum Almacen {
         escribir(filamentos, "filamentos.json")
     }
 
-    /// Borra todo lo guardado (al cerrar sesión), menos la cola sin señal.
+    /// Borra la copia de los pedidos (al cerrar sesión). La cola sin señal,
+    /// los perfiles y los filamentos se quedan: la app es de una sola cuenta y
+    /// así la calculadora sirve sin señal apenas se vuelve a entrar.
     static func borrarTodo() {
         let archivos = (try? FileManager.default.contentsOfDirectory(at: carpeta, includingPropertiesForKeys: nil)) ?? []
-        for archivo in archivos {
-            let nombre = archivo.lastPathComponent
-            if nombre.hasPrefix("pedido") || nombre == "perfiles.json" || nombre == "filamentos.json" {
-                try? FileManager.default.removeItem(at: archivo)
-            }
+        for archivo in archivos where archivo.lastPathComponent.hasPrefix("pedido") {
+            try? FileManager.default.removeItem(at: archivo)
         }
     }
 

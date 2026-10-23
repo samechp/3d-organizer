@@ -151,8 +151,9 @@ struct AjustesVista: View {
             dato("Vida útil de la máquina", "\(Formato.decimal(p.vidaMaquinaH)) h")
             dato("Repuestos", Formato.pesos(p.precioRepuestos))
             dato("Margen de error", "\(Formato.decimal(p.margenError)) %")
-            dato("Precio del dólar", p.precioDolar.map { Formato.pesos($0) }
-                 ?? "Sin definir (\(Formato.pesos(Catalogo.dolarPorDefecto)))")
+            // 0 también es "sin definir": la calculadora usa el de siempre.
+            dato("Precio del dólar", (p.precioDolar ?? 0) > 0 ? Formato.pesos(p.precioDolar ?? 0)
+                 : "Sin definir (\(Formato.pesos(Catalogo.dolarPorDefecto)))")
             Button {
                 hojaPerfil = .editar(p)
             } label: {
@@ -281,7 +282,6 @@ struct AjustesVista: View {
         cerrando = true
         Task {
             await sesion.salir()
-            catalogo.olvidar()
             cerrando = false
         }
     }
