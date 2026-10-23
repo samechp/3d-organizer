@@ -82,6 +82,7 @@ struct AnotarTandaVista: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+            .interactiveDismissDisabled(enviando)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -100,6 +101,7 @@ struct AnotarTandaVista: View {
                         Image(systemName: "xmark")
                     }
                     .accessibilityLabel("Cerrar")
+                    .disabled(enviando)
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -303,6 +305,18 @@ struct AnotarTandaVista: View {
             tanda = TandaNueva(modeloId: modelo.id, cantidad: cantidad, cuando: hora)
             intento = tanda
         }
+        // Una igual esperando en la cola: el servidor todavía no la conoce y no
+        // la detectaría, así que se pregunta aquí.
+        if !forzar, let enCola = envios.pendienteParecida(modeloId: modelo.id, cantidad: cantidad,
+                                                           cuando: hora ?? Date()) {
+            let minutos = Int(abs((hora ?? Date()).timeIntervalSince(enCola.cuando)) / 60)
+            aviso = Aviso(texto: textoAviso(cantidad: cantidad, modelo: modelo.nombre,
+                                            previa: enCola.cuando, minutos: minutos))
+            return
+        }
+        // Se toma ya: si la sesión vence, la hoja desaparece a mitad del envío
+        // y el entorno deja de estar disponible.
+        let cola = envios
         enviando = true
         fallo = nil
         Task {
@@ -318,11 +332,13 @@ struct AnotarTandaVista: View {
             } catch is CancellationError {
                 // La hoja se cerró: nada que mostrar.
             } catch ErrorAPI.sinConexion {
-                sinSenal(tanda, modelo: modelo, forzar: forzar)
+                sinSenal(tanda, modelo: modelo, forzar: forzar, cola: cola)
             } catch ErrorAPI.sinSesion {
-                // La sesión venció: la tanda no se pierde, queda en la cola y
-                // se manda al volver a entrar.
-                sinSenal(tanda, modelo: modelo, forzar: forzar)
+                // La sesión venció y la app ya vuelve a la pantalla de entrar:
+                // la hoja se va, así que no se pregunta nada. Juan ya tocó
+                // Guardar; queda en la cola y se manda al volver a entrar.
+                encolar(tanda, nombre: modelo.nombre, cola: cola)
+                listo(tanda, nombre: modelo.nombre, enCola: true)
             } catch {
                 fallo = error.textoParaMostrar
             }
@@ -332,27 +348,35 @@ struct AnotarTandaVista: View {
     /// Sin servidor: misma pregunta que haría él, contra lo guardado en el
     /// iPhone y lo que ya está en la cola. Lo que entra a la cola ya no se
     /// vuelve a preguntar (se manda con forzar: true).
-    private func sinSenal(_ tanda: TandaNueva, modelo: Modelo, forzar: Bool) {
+    private func sinSenal(_ tanda: TandaNueva, modelo: Modelo, forzar: Bool, cola: Envios) {
         let momento = tanda.cuando ?? Date()
-        if !forzar, let previa = parecidaLocal(modeloId: modelo.id, cantidad: tanda.cantidad, cuando: momento) {
+        if !forzar, let previa = parecidaLocal(modeloId: modelo.id, cantidad: tanda.cantidad, cuando: momento,
+                                                         cola: cola) {
             let minutos = Int(abs(momento.timeIntervalSince(previa)) / 60)
             aviso = Aviso(texto: textoAviso(cantidad: tanda.cantidad, modelo: modelo.nombre,
                                             previa: previa, minutos: minutos))
             return
         }
-        envios.agregar(TandaPendiente(idCliente: tanda.idCliente, modeloId: tanda.modeloId,
-                                      cantidad: tanda.cantidad, cuando: momento))
+        encolar(tanda, nombre: modelo.nombre, cola: cola)
         listo(tanda, nombre: modelo.nombre, enCola: true)
     }
 
+    /// La hora queda fija desde ahora (si no, el servidor pondría la de cuando
+    /// vuelva la señal).
+    private func encolar(_ tanda: TandaNueva, nombre: String, cola: Envios) {
+        cola.agregar(TandaPendiente(idCliente: tanda.idCliente, modeloId: tanda.modeloId,
+                                    cantidad: tanda.cantidad, cuando: tanda.cuando ?? Date(),
+                                    nombreModelo: nombre))
+    }
+
     /// La hora de la tanda parecida más reciente, si hay.
-    private func parecidaLocal(modeloId: Int, cantidad: Int, cuando: Date) -> Date? {
+    private func parecidaLocal(modeloId: Int, cantidad: Int, cuando: Date, cola: Envios) -> Date? {
         let guardada = tandas.first { t in
             guard t.modeloId == modeloId, let fecha = t.fecha else { return false }
             return ReglaParecida.esParecida(cantidad: cantidad, cuando: cuando,
                                             otraCantidad: t.cantidad, otroCuando: fecha)
         }?.fecha
-        let enCola = envios.pendienteParecida(modeloId: modeloId, cantidad: cantidad, cuando: cuando)?.cuando
+        let enCola = cola.pendienteParecida(modeloId: modeloId, cantidad: cantidad, cuando: cuando)?.cuando
         switch (guardada, enCola) {
         case let (a?, b?): return max(a, b)
         case let (a?, nil): return a

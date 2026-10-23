@@ -17,6 +17,10 @@ struct TandaPendiente: Codable, Equatable {
     /// Hora fija desde que se anotó: si se mandara sin hora, el servidor pondría
     /// la de cuando vuelve la señal.
     var cuando: Date
+    /// Para mostrarla si el servidor la rechaza, aunque ya no esté guardado el
+    /// pedido. Opcional: las colas escritas antes de existir este campo se
+    /// siguen leyendo.
+    var nombreModelo: String? = nil
 }
 
 /// Una tanda que el servidor rechazó (el modelo ya no existe, una cantidad no

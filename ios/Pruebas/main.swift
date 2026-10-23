@@ -238,6 +238,35 @@ pruebas.append(Prueba(nombre: "descartada se quita de la cola y se guarda con su
     }
 })
 
+pruebas.append(Prueba(nombre: "cola escrita antes de nombreModelo se sigue leyendo") {
+    // Lo que escribía la versión 5f80d44: sin nombreModelo.
+    let viejo = """
+    {"pendientes":[{"idCliente":"8F2D3B1C-0000-4000-8000-000000000001","modeloId":7,"cantidad":50,"cuando":800000000}],
+     "descartadas":[{"tanda":{"idCliente":"8F2D3B1C-0000-4000-8000-000000000002","modeloId":7,"cantidad":3,"cuando":800000000},"motivo":"No existe ese modelo"}]}
+    """
+    let archivo = archivoTemporal()
+    do {
+        try Data(viejo.utf8).write(to: archivo)
+    } catch {
+        return ["no se pudo escribir el archivo de prueba"]
+    }
+    let cola = ColaTandas(archivo: archivo) { _ in .detener }
+    var fallos: [String] = []
+    if cola.pendientes.map({ $0.cantidad }) != [50] { fallos.append("no leyó la pendiente vieja") }
+    if cola.pendientes.first?.nombreModelo != nil { fallos.append("nombreModelo debería quedar en nil") }
+    if cola.descartadas.map({ $0.motivo }) != ["No existe ese modelo"] { fallos.append("no leyó la descartada vieja") }
+    return fallos
+})
+
+pruebas.append(Prueba(nombre: "el nombre del modelo se guarda con la tanda") {
+    let archivo = archivoTemporal()
+    var t = tandaDePrueba(50)
+    t.nombreModelo = "Prof Completo"
+    ColaTandas(archivo: archivo) { _ in .detener }.agregar(t)
+    let releida = ColaTandas(archivo: archivo) { _ in .detener }
+    return releida.pendientes.first?.nombreModelo == "Prof Completo" ? [] : ["se perdió el nombre del modelo"]
+})
+
 pruebas.append(Prueba(nombre: "regla de 3 horas igual a la del servidor") {
     let base = Date(timeIntervalSince1970: 1_800_000_000)
     var fallos: [String] = []

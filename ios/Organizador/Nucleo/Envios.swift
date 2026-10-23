@@ -17,6 +17,7 @@ final class Envios {
     @ObservationIgnored private let cola: ColaTandas
     @ObservationIgnored private let monitor = NWPathMonitor()
     @ObservationIgnored private var habiaRed = true
+    @ObservationIgnored private var reintento: Task<Void, Never>?
 
     init() {
         cola = ColaTandas(archivo: Almacen.carpeta.appendingPathComponent("cola-tandas.json"),
@@ -39,11 +40,13 @@ final class Envios {
         guard !pendientes.isEmpty, Llavero.leer() != nil else { return }
         await cola.vaciar()
         actualizar()
+        programarReintento()
     }
 
     func agregar(_ tanda: TandaPendiente) {
         cola.agregar(tanda)
         actualizar()
+        programarReintento()
     }
 
     func reintentarDescartadas() {
@@ -77,6 +80,27 @@ final class Envios {
         if ahora.count < antes { enviadas += 1 }
     }
 
+    /// El iPhone puede decir que hay red y el servidor no contestar (wifi sin
+    /// salida, servidor reiniciándose): entonces NWPathMonitor no vuelve a
+    /// avisar. Mientras quede algo en la cola se reintenta a los 30 s, 1, 2 y
+    /// después cada 5 minutos.
+    private func programarReintento() {
+        guard reintento == nil, !pendientes.isEmpty else { return }
+        reintento = Task { [weak self] in
+            var espera: UInt64 = 30
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: espera * 1_000_000_000)
+                guard let self else { return }
+                await self.vaciar()
+                if self.pendientes.isEmpty {
+                    self.reintento = nil
+                    return
+                }
+                espera = min(espera * 2, 300)
+            }
+        }
+    }
+
     private func cambioDeRed(_ hayRed: Bool) {
         let volvio = hayRed && !habiaRed
         habiaRed = hayRed
@@ -99,9 +123,10 @@ final class Envios {
                 // La sesión vencida no borra nada: al volver a entrar se manda.
                 return .detener
             case .datos:
-                // Llegó un 2xx que no se pudo leer: el servidor sí la guardó.
-                return .enviada
-            case .servidor(let texto):
+                // enviarTanda ya toma un 2xx ilegible como guardada; un .datos
+                // aquí es de antes de mandar y reintentar no lo arregla.
+                return .descartar("La app no pudo armar el envío de esta tanda.")
+            case .servidor(let texto), .noExiste(let texto):
                 return .descartar(texto)
             }
         } catch {

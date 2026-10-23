@@ -24,6 +24,10 @@ struct NuevoPedidoVista: View {
     @State private var entrega: Date
     @State private var modelos: [FilaModelo]
     @State private var guardando = false
+    /// Los modelos como están en el servidor según lo último que se sabe. Se
+    /// actualiza con cada paso que sale bien: si guardar falla a la mitad, el
+    /// reintento solo hace lo que faltó (no duplica ni vuelve a borrar).
+    @State private var originales: [Modelo]
     @State private var fallo: String? = nil
 
     private static let maxModelos = 50
@@ -31,6 +35,7 @@ struct NuevoPedidoVista: View {
     init(editando: PedidoDetalle?, alGuardar: @escaping (PedidoDetalle) -> Void) {
         self.editando = editando
         self.alGuardar = alGuardar
+        _originales = State(initialValue: editando?.modelos ?? [])
         let enUnaSemana = Formato.calendario.date(byAdding: .day, value: 7, to: Date()) ?? Date()
         if let d = editando {
             _nombre = State(initialValue: d.nombre)
@@ -148,6 +153,8 @@ struct NuevoPedidoVista: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            // Mientras se guarda no se tocan las filas: guardarCambios las va marcando.
+            .disabled(guardando)
             .navigationTitle(editando == nil ? "Nuevo pedido" : "Editar pedido")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(guardando)
@@ -215,7 +222,26 @@ struct NuevoPedidoVista: View {
             cerrar()
         } catch {
             fallo = error.textoParaMostrar
+            if let d = editando { await recargarTrasFallo(d) }
         }
+    }
+
+    /// Un paso pudo quedar hecho en el servidor aunque la respuesta no llegó
+    /// (timeout): se pregunta cómo quedó para que el reintento no lo repita.
+    private func recargarTrasFallo(_ d: PedidoDetalle) async {
+        guard let fresco = try? await ClienteAPI.compartido.pedido(id: d.id) else { return }
+        let conocidos = Set(originales.map { $0.id })
+        var adoptados = Set<Int>()
+        for nuevo in fresco.modelos where !conocidos.contains(nuevo.id) {
+            if let i = modelos.firstIndex(where: { $0.existenteId == nil && limpio($0.nombre) == nuevo.nombre }) {
+                modelos[i].existenteId = nuevo.id
+                modelos[i].hechas = nuevo.hechas
+                adoptados.insert(nuevo.id)
+            }
+        }
+        // Un modelo que alguien agregó desde la web no entra: si entrara, el
+        // reintento lo borraría por no estar en la lista.
+        originales = fresco.modelos.filter { conocidos.contains($0.id) || adoptados.contains($0.id) }
     }
 
     /// Primero los modelos (quitar, cambiar, agregar) y al final el pedido,
@@ -223,22 +249,32 @@ struct NuevoPedidoVista: View {
     private func guardarCambios(_ d: PedidoDetalle) async throws -> PedidoDetalle {
         let api = ClienteAPI.compartido
         let quedan = Set(modelos.compactMap { $0.existenteId })
-        for viejo in d.modelos where !quedan.contains(viejo.id) {
-            try await api.borrarModelo(id: viejo.id)
+        for viejo in originales where !quedan.contains(viejo.id) {
+            do {
+                try await api.borrarModelo(id: viejo.id)
+            } catch ErrorAPI.noExiste {
+                // Ya estaba borrado (un intento anterior o desde la web).
+            }
+            originales.removeAll { $0.id == viejo.id }
         }
-        for m in modelos {
-            let nm = limpio(m.nombre)
-            let meta = metaValida(m.meta) ?? 1
-            if let id = m.existenteId {
-                guard let antes = d.modelos.first(where: { $0.id == id }) else { continue }
+        for fila in modelos {
+            let nm = limpio(fila.nombre)
+            let meta = metaValida(fila.meta) ?? 1
+            if let id = fila.existenteId {
+                guard let antes = originales.first(where: { $0.id == id }) else { continue }
                 var cambios = CambiosModelo()
                 if nm != antes.nombre { cambios.nombre = nm }
                 if meta != antes.meta { cambios.meta = meta }
                 if cambios.nombre != nil || cambios.meta != nil {
-                    _ = try await api.editarModelo(id: id, cambios)
+                    let nuevo = try await api.editarModelo(id: id, cambios)
+                    if let k = originales.firstIndex(where: { $0.id == id }) { originales[k] = nuevo }
                 }
             } else {
-                _ = try await api.agregarModelo(pedidoId: d.id, ModeloNuevo(nombre: nm, meta: meta))
+                let nuevo = try await api.agregarModelo(pedidoId: d.id, ModeloNuevo(nombre: nm, meta: meta))
+                originales.append(nuevo)
+                if let i = modelos.firstIndex(where: { $0.id == fila.id }) {
+                    modelos[i].existenteId = nuevo.id
+                }
             }
         }
 

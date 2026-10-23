@@ -11,6 +11,9 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
     case sinConexion
     /// El servidor contestó con un error; el texto ya viene listo para mostrar.
     case servidor(String)
+    /// 404: lo que se pidió ya no existe (lo borraron, por ejemplo desde la
+    /// web). Va aparte para que quien borra lo tome como "ya estaba borrado".
+    case noExiste(String)
     /// La respuesta no tiene la forma esperada.
     case datos
     /// El iPhone no dejó guardar el token en el llavero.
@@ -21,6 +24,7 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
         case .sinSesion: return "La sesión se cerró. Vuelve a entrar."
         case .sinConexion: return "No hay conexión con el servidor. Revisa la señal e inténtalo de nuevo."
         case .servidor(let texto): return texto
+        case .noExiste(let texto): return texto
         case .datos: return "El servidor respondió algo que la app no entiende."
         case .llavero: return "No se pudo guardar la sesión en este iPhone. Inténtalo de nuevo."
         }
@@ -28,7 +32,8 @@ enum ErrorAPI: Error, LocalizedError, Equatable {
 }
 
 enum ResultadoTanda {
-    case guardada(Tanda)
+    /// nil si el servidor respondió 2xx (la guardó) pero no se pudo leer la tanda.
+    case guardada(Tanda?)
     /// No se guardó: ya hay una igual hace poco. Para guardarla igual, se
     /// reenvía con forzar: true.
     case parecida(TandaParecida)
@@ -165,7 +170,9 @@ final class ClienteAPI {
     func enviarTanda(_ tanda: TandaNueva, forzar: Bool = false) async throws -> ResultadoTanda {
         do {
             let datos = try await pedir("POST", "/api/tandas", json: CuerpoTanda(tanda, forzar: forzar))
-            return .guardada(try decodificar(datos))
+            // Un 2xx ilegible igual quiere decir que quedó guardada: no es lo
+            // mismo que un .datos de antes de mandar (que nunca llegó).
+            return .guardada(try? decodificador.decode(Tanda.self, from: datos))
         } catch ErrorInterno.conflicto(let datos) {
             // Un 409 con {"parecida": {...}} no es un error: es la pregunta
             // "¿ya la anotaste?". Cualquier otro 409 sí se muestra como error.
@@ -292,6 +299,8 @@ final class ClienteAPI {
             // despliegue): para quien llama es lo mismo que no tener señal, y así
             // la cola sin señal reintenta en vez de descartar la tanda.
             throw ErrorAPI.sinConexion
+        case 404:
+            throw ErrorAPI.noExiste(ClienteAPI.textoDeError(datos, codigo: 404))
         default:
             throw ErrorAPI.servidor(ClienteAPI.textoDeError(datos, codigo: http.statusCode))
         }

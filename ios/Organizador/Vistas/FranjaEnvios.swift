@@ -69,7 +69,7 @@ struct DescartadasVista: View {
                 Section {
                     ForEach(Array(envios.descartadas.enumerated()), id: \.offset) { _, d in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(Formato.num(d.tanda.cantidad)) de \(Almacen.nombreModelo(id: d.tanda.modeloId) ?? "un modelo")")
+                            Text("\(Formato.num(d.tanda.cantidad)) de \(d.tanda.nombreModelo ?? Almacen.nombreModelo(id: d.tanda.modeloId) ?? "un modelo")")
                                 .font(.body.weight(.semibold))
                             Text(Formato.cuando(d.tanda.cuando))
                                 .font(.subheadline)
