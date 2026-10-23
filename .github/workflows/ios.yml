@@ -1,0 +1,142 @@
+name: Compilar y subir a TestFlight
+
+# Cada cambio de la app en main se compila y se sube a TestFlight. Los cambios
+# del servidor, la web o la documentación no tocan ios/ y no gastan minutos.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+    working-directory: ios
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Elegir Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "Usando $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Probar la lógica pura
+        run: |
+          swiftc Organizador/Puro/*.swift Pruebas/main.swift -o pruebas
+          ./pruebas
+
+      - name: Generar proyecto de Xcode
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Revisar claves de Apple
+        id: asc
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Faltan las claves de App Store Connect en Secrets: se compila sin firmar."
+          fi
+
+      # --- Con claves de Apple: firmar y subir a TestFlight ---
+
+      - name: Archivar
+        if: steps.asc.outputs.enabled == 'true'
+        run: |
+          xcodebuild archive \
+            -project Organizador.xcodeproj \
+            -scheme Organizador \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Organizador.xcarchive \
+            -quiet \
+            CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+
+      - name: Firmar y subir a TestFlight
+        if: steps.asc.outputs.enabled == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          trap 'rm -f "$KEY_PATH"' EXIT
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath build/Organizador.xcarchive \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+          {
+            echo "## 3D Organizer subido a TestFlight"
+            echo ""
+            echo "Compilación ${{ github.run_number }}. Apple tarda unos 10–20 minutos en procesarla;"
+            echo "después aparece en la app TestFlight del iPhone con el botón Actualizar."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- Sin claves de Apple: .ipa sin firmar ---
+
+      - name: Compilar (sin firmar)
+        if: steps.asc.outputs.enabled != 'true'
+        run: |
+          xcodebuild build \
+            -project Organizador.xcodeproj \
+            -scheme Organizador \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            -quiet \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }}
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Organizador.app Payload/
+          zip -qry Organizador.ipa Payload
+          ls -lh Organizador.ipa
+
+      - name: Guardar .ipa como artefacto
+        if: steps.asc.outputs.enabled != 'true'
+        uses: actions/upload-artifact@v5
+        with:
+          name: Organizador-ipa
+          # upload-artifact no usa working-directory: la ruta va desde la raíz del repo.
+          path: ios/Organizador.ipa

@@ -8,3 +8,9 @@ build/
 .DS_Store
 .superpowers/
 *.db
+
+# Generados en CI (XcodeGen y pruebas)
+ios/Organizador/Info.plist
+ios/pruebas
+ios/Payload/
+*.ipa
