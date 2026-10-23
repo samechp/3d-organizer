@@ -17,7 +17,7 @@ import os
 
 from sqlalchemy import (
     CHAR, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey,
-    Integer, MetaData, Numeric, String, Table, Text, create_engine, func, text,
+    Index, Integer, MetaData, Numeric, String, Table, Text, create_engine, func, text,
 )
 
 
@@ -62,6 +62,20 @@ intentos = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("ip", String(45), nullable=False),  # 45 = IPv6 en texto, el caso mas largo
     Column("momento", DateTime, nullable=False, server_default=func.now()),
+    # Cada login cuenta los fallos de una IP en la ultima ventana: sin este
+    # indice seria recorrer toda la tabla en cada intento.
+    Index("ix_intentos_ip_momento", "ip", "momento"),
+)
+
+# Vista de solo lectura de printoverse.usuarios, con las columnas que se usan.
+# Va en otro MetaData a proposito: asi crear_tablas() nunca intenta crearla en
+# la base de la tienda (ni podria: ese usuario MySQL solo tiene SELECT).
+usuarios_tienda = Table(
+    "usuarios", MetaData(),
+    Column("correo", String(120), primary_key=True),
+    Column("clave_hash", String(255)),
+    Column("activo", Integer),
+    Column("debe_cambiar", Integer),
 )
 
 pedidos = Table(

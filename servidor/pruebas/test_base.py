@@ -53,3 +53,10 @@ def test_importar_principal_sin_variables_no_falla(monkeypatch):
     from servidor.app import principal
     importlib.reload(principal)
     assert callable(principal.crear_app)
+
+
+def test_intentos_tiene_indice_por_ip_y_momento(motores):
+    # El limite de intentos consulta por ip + momento en cada login.
+    motor_sistema, _ = motores
+    indices = inspect(motor_sistema).get_indexes("intentos")
+    assert any(i["column_names"] == ["ip", "momento"] for i in indices)
