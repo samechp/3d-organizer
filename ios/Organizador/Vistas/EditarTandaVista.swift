@@ -1,12 +1,27 @@
 // Hoja para corregir una tanda: cantidad (con − y + para el típico "anoté 50
 // pero uno salió malo"), fecha y hora, o borrarla. La abren el Historial y
 // las últimas tandas del Detalle, así que vive aparte para que las dos
-// pantallas usen la misma.
+// pantallas usen la misma. Con init(movimiento:) corrige también una venta o
+// tanda de un producto (mismos campos, otras rutas).
 import SwiftUI
 import UIKit
 
 struct EditarTandaVista: View {
-    let tanda: Tanda
+    /// Lo que se corrige, ya sea tanda de pedido o movimiento de producto.
+    private struct Dato {
+        let titulo: String
+        let etiqueta: String
+        let nombre: String
+        let cantidad: Int
+        let fecha: Date?
+        let textoBorrar: String
+        let avisoBorrar: String
+        let anuncioBorrado: String
+        let editar: (CambiosTanda) async throws -> Void
+        let borrar: () async throws -> Void
+    }
+
+    private let dato: Dato
     /// Se llama después de guardar, antes de cerrar: la pantalla de atrás recarga.
     let alGuardar: () async -> Void
     /// Se llama después de borrar (o si ya estaba borrada), antes de cerrar.
@@ -26,11 +41,44 @@ struct EditarTandaVista: View {
     private static let maximo = 100_000
 
     init(tanda: Tanda, alGuardar: @escaping () async -> Void, alBorrar: @escaping () async -> Void) {
-        self.tanda = tanda
+        let id = tanda.id
+        self.init(dato: Dato(
+            titulo: "Editar tanda", etiqueta: "Modelo", nombre: tanda.modelo,
+            cantidad: tanda.cantidad, fecha: tanda.fecha, textoBorrar: "Borrar tanda",
+            avisoBorrar: "Se restan \(Formato.num(tanda.cantidad)) de \(tanda.modelo) del avance del pedido.",
+            anuncioBorrado: "Tanda borrada",
+            editar: { cambios in _ = try await ClienteAPI.compartido.editarTanda(id: id, cambios) },
+            borrar: { try await ClienteAPI.compartido.borrarTandaAunqueNoExista(id: id) }),
+            alGuardar: alGuardar, alBorrar: alBorrar)
+    }
+
+    init(movimiento m: Movimiento, alGuardar: @escaping () async -> Void, alBorrar: @escaping () async -> Void) {
+        let id = m.id
+        let venta = m.esVenta
+        self.init(dato: Dato(
+            titulo: venta ? "Editar venta" : "Editar tanda", etiqueta: "Opción", nombre: m.opcion,
+            cantidad: m.cantidad, fecha: m.fecha, textoBorrar: venta ? "Borrar venta" : "Borrar tanda",
+            avisoBorrar: venta
+                ? "Se devuelven \(Formato.num(m.cantidad)) al stock de \(m.opcion)."
+                : "Se restan \(Formato.num(m.cantidad)) del stock de \(m.opcion).",
+            anuncioBorrado: venta ? "Venta borrada" : "Tanda borrada",
+            editar: { cambios in _ = try await ClienteAPI.compartido.editarMovimiento(id: id, cambios) },
+            borrar: {
+                do {
+                    try await ClienteAPI.compartido.borrarMovimiento(id: id)
+                } catch ErrorAPI.noExiste {
+                    // Ya estaba borrado.
+                }
+            }),
+            alGuardar: alGuardar, alBorrar: alBorrar)
+    }
+
+    private init(dato: Dato, alGuardar: @escaping () async -> Void, alBorrar: @escaping () async -> Void) {
+        self.dato = dato
         self.alGuardar = alGuardar
         self.alBorrar = alBorrar
-        _textoCantidad = State(initialValue: String(tanda.cantidad))
-        _cuando = State(initialValue: tanda.fecha ?? Date())
+        _textoCantidad = State(initialValue: String(dato.cantidad))
+        _cuando = State(initialValue: dato.fecha ?? Date())
     }
 
     private var cantidad: Int? {
@@ -40,7 +88,7 @@ struct EditarTandaVista: View {
 
     /// Desde dónde suman o restan − y +: lo escrito o, si no es un número,
     /// lo que tenía la tanda.
-    private var base: Int { Int(textoCantidad) ?? tanda.cantidad }
+    private var base: Int { Int(textoCantidad) ?? dato.cantidad }
 
     private var ocupado: Bool { guardando || borrando }
 
@@ -48,7 +96,7 @@ struct EditarTandaVista: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Modelo", value: tanda.modelo)
+                    LabeledContent(dato.etiqueta, value: dato.nombre)
                     HStack(spacing: 12) {
                         TextField("Cantidad", text: $textoCantidad)
                             .keyboardType(.numberPad)
@@ -78,7 +126,7 @@ struct EditarTandaVista: View {
                         confirmarBorrar = true
                     } label: {
                         HStack {
-                            Label("Borrar tanda", systemImage: "trash")
+                            Label(dato.textoBorrar, systemImage: "trash")
                             if borrando {
                                 Spacer()
                                 ProgressView()
@@ -88,7 +136,7 @@ struct EditarTandaVista: View {
                     .disabled(ocupado)
                 }
             }
-            .navigationTitle("Editar tanda")
+            .navigationTitle(dato.titulo)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -103,14 +151,14 @@ struct EditarTandaVista: View {
                     }
                 }
             }
-            .confirmationDialog("¿Borrar esta tanda?", isPresented: $confirmarBorrar,
+            .confirmationDialog("¿\(dato.textoBorrar)?", isPresented: $confirmarBorrar,
                                 titleVisibility: .visible) {
-                Button("Borrar tanda", role: .destructive) {
+                Button(dato.textoBorrar, role: .destructive) {
                     Task { await borrar() }
                 }
                 Button("Cancelar", role: .cancel) {}
             } message: {
-                Text("Se restan \(Formato.num(tanda.cantidad)) de \(tanda.modelo) del avance del pedido.")
+                Text(dato.avisoBorrar)
             }
             .sensoryFeedback(.selection, trigger: pasos)
             .sensoryFeedback(.success, trigger: hechos)
@@ -145,10 +193,10 @@ struct EditarTandaVista: View {
         guard let cantidad else { return }
         // Solo se manda lo que cambió.
         var cambios = CambiosTanda()
-        if cantidad != tanda.cantidad { cambios.cantidad = cantidad }
-        if let antes = tanda.fecha, abs(antes.timeIntervalSince(cuando)) >= 60 {
+        if cantidad != dato.cantidad { cambios.cantidad = cantidad }
+        if let antes = dato.fecha, abs(antes.timeIntervalSince(cuando)) >= 60 {
             cambios.cuando = Fechas.textoHora(cuando)
-        } else if tanda.fecha == nil {
+        } else if dato.fecha == nil {
             cambios.cuando = Fechas.textoHora(cuando)
         }
         guard cambios.cantidad != nil || cambios.cuando != nil else {
@@ -158,7 +206,7 @@ struct EditarTandaVista: View {
         guardando = true
         defer { guardando = false }
         do {
-            _ = try await ClienteAPI.compartido.editarTanda(id: tanda.id, cambios)
+            try await dato.editar(cambios)
             hechos += 1
             await alGuardar()
             cerrar()
@@ -173,9 +221,9 @@ struct EditarTandaVista: View {
         borrando = true
         defer { borrando = false }
         do {
-            try await ClienteAPI.compartido.borrarTandaAunqueNoExista(id: tanda.id)
+            try await dato.borrar()
             hechos += 1
-            UIAccessibility.post(notification: .announcement, argument: "Tanda borrada")
+            UIAccessibility.post(notification: .announcement, argument: dato.anuncioBorrado)
             await alBorrar()
             cerrar()
         } catch is CancellationError {

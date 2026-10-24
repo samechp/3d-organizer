@@ -381,3 +381,136 @@ struct CambiosFilamento: Encodable, Hashable {
         try c.encodeIfPresent(moneda, forKey: .moneda)
     }
 }
+
+// MARK: - Productos (servidor/app/productos.py)
+
+/// saldo = tandas − ventas: positivo es stock, negativo es lo que falta imprimir.
+struct OpcionProducto: Codable, Hashable, Identifiable {
+    let id: Int
+    let nombre: String
+    var saldo: Int
+}
+
+struct Movimiento: Codable, Hashable, Identifiable {
+    let id: Int
+    let opcionId: Int
+    /// Nombre de la opción, para las listas.
+    let opcion: String
+    /// "venta" o "tanda".
+    let tipo: String
+    let cantidad: Int
+    let cuando: String
+    let idCliente: String?
+
+    var esVenta: Bool { tipo == "venta" }
+    var fecha: Date? { Fechas.hora(cuando) }
+}
+
+struct ProductoResumen: Codable, Hashable, Identifiable {
+    let id: Int
+    let nombre: String
+    let fotoUrl: String?
+    var opciones: [OpcionProducto]
+    var faltan: Int
+    var stock: Int
+}
+
+struct ProductoDetalle: Codable, Hashable, Identifiable {
+    let id: Int
+    let nombre: String
+    let fotoUrl: String?
+    var opciones: [OpcionProducto]
+    var faltan: Int
+    var stock: Int
+    /// Los últimos 30, el más reciente primero.
+    var movimientos: [Movimiento]
+
+    var resumen: ProductoResumen {
+        ProductoResumen(id: id, nombre: nombre, fotoUrl: fotoUrl, opciones: opciones, faltan: faltan, stock: stock)
+    }
+}
+
+extension Array where Element == OpcionProducto {
+    /// Suma a cada saldo lo que espera en la cola sin señal (el servidor
+    /// todavía no lo conoce): así una venta sin señal se ve al momento.
+    func conPendientes(_ pendientes: [TandaPendiente]) -> [OpcionProducto] {
+        map { o in
+            var nueva = o
+            for p in pendientes where p.opcionId == o.id { nueva.saldo += p.cambioDeSaldo }
+            return nueva
+        }
+    }
+
+    var faltan: Int { reduce(0) { $0 + Swift.max(0, -$1.saldo) } }
+    var stock: Int { reduce(0) { $0 + Swift.max(0, $1.saldo) } }
+}
+
+extension ProductoResumen {
+    func conPendientes(_ pendientes: [TandaPendiente]) -> ProductoResumen {
+        var r = self
+        r.opciones = opciones.conPendientes(pendientes)
+        r.faltan = r.opciones.faltan
+        r.stock = r.opciones.stock
+        return r
+    }
+}
+
+extension ProductoDetalle {
+    func conPendientes(_ pendientes: [TandaPendiente]) -> ProductoDetalle {
+        var d = self
+        d.opciones = opciones.conPendientes(pendientes)
+        d.faltan = d.opciones.faltan
+        d.stock = d.opciones.stock
+        return d
+    }
+}
+
+enum TipoMovimiento: String, Codable, Hashable {
+    case venta, tanda
+}
+
+/// Un movimiento por enviar. Como TandaNueva: el idCliente se fija una vez y
+/// un reenvío no lo duplica.
+struct MovimientoNuevo: Hashable {
+    var idCliente: UUID = UUID()
+    var opcionId: Int
+    var tipo: TipoMovimiento
+    var cantidad: Int
+    /// nil = ahora (la hora la pone el servidor).
+    var cuando: Date?
+}
+
+/// El JSON de POST /api/movimientos.
+struct CuerpoMovimiento: Encodable {
+    let idCliente: String
+    let opcionId: Int
+    let tipo: String
+    let cantidad: Int
+    let cuando: String?
+    let forzar: Bool
+
+    init(_ m: MovimientoNuevo, forzar: Bool) {
+        idCliente = m.idCliente.uuidString.lowercased()
+        opcionId = m.opcionId
+        tipo = m.tipo.rawValue
+        cantidad = m.cantidad
+        cuando = m.cuando.map { Fechas.textoHora($0) }
+        self.forzar = forzar
+    }
+}
+
+struct OpcionNueva: Codable, Hashable {
+    var nombre: String
+    /// "¿Ya tienes hechos?": nil o 0 = ninguno.
+    var hechos: Int?
+}
+
+struct ProductoNuevo: Codable, Hashable {
+    var nombre: String
+    var opciones: [OpcionNueva]
+}
+
+/// Para PATCH /api/productos/{id} y para crear o renombrar una opción.
+struct SoloNombre: Codable, Hashable {
+    var nombre: String
+}

@@ -44,6 +44,13 @@ enum ResultadoTanda {
     case parecida(TandaParecida)
 }
 
+enum ResultadoMovimiento {
+    /// nil si el servidor respondió 2xx pero no se pudo leer el movimiento.
+    case guardado(Movimiento?)
+    /// Solo para tandas: ya hay una igual hace poco (se reenvía con forzar: true).
+    case parecida(TandaParecida)
+}
+
 extension Notification.Name {
     /// Se publica cuando el servidor responde 401: la Sesion la escucha y
     /// vuelve a la pantalla de entrar.
@@ -145,6 +152,10 @@ final class ClienteAPI {
 
     /// Sube la foto del modelo (JPEG, máximo 3 MB) y devuelve el modelo con su foto_url nueva.
     func subirFoto(modeloId: Int, jpeg: Data) async throws -> Modelo {
+        try decodificar(try await subirJPEG("/api/modelos/\(modeloId)/foto", jpeg: jpeg))
+    }
+
+    private func subirJPEG(_ ruta: String, jpeg: Data) async throws -> Data {
         let limite = "Limite-\(UUID().uuidString)"
         var cuerpo = Data()
         cuerpo.append(Data("--\(limite)\r\n".utf8))
@@ -152,9 +163,8 @@ final class ClienteAPI {
         cuerpo.append(Data("Content-Type: image/jpeg\r\n\r\n".utf8))
         cuerpo.append(jpeg)
         cuerpo.append(Data("\r\n--\(limite)--\r\n".utf8))
-        let datos = try await pedir("PUT", "/api/modelos/\(modeloId)/foto", cuerpo: cuerpo,
-                                    tipo: "multipart/form-data; boundary=\(limite)", espera: 60)
-        return try decodificar(datos)
+        return try await pedir("PUT", ruta, cuerpo: cuerpo,
+                               tipo: "multipart/form-data; boundary=\(limite)", espera: 60)
     }
 
     /// Baja una foto (foto_url de un Modelo). Pide sesión, por eso no sirve AsyncImage.
@@ -196,6 +206,65 @@ final class ClienteAPI {
         _ = try await pedir("DELETE", "/api/tandas/\(id)")
     }
 
+    // MARK: - Productos
+
+    func productos() async throws -> [ProductoResumen] {
+        try decodificar(try await pedir("GET", "/api/productos"))
+    }
+
+    func producto(id: Int) async throws -> ProductoDetalle {
+        try decodificar(try await pedir("GET", "/api/productos/\(id)"))
+    }
+
+    func crearProducto(_ nuevo: ProductoNuevo) async throws -> ProductoDetalle {
+        try decodificar(try await pedir("POST", "/api/productos", json: nuevo))
+    }
+
+    func renombrarProducto(id: Int, nombre: String) async throws -> ProductoDetalle {
+        try decodificar(try await pedir("PATCH", "/api/productos/\(id)", json: SoloNombre(nombre: nombre)))
+    }
+
+    /// Devuelve el producto con su foto_url nueva.
+    func subirFoto(productoId: Int, jpeg: Data) async throws -> ProductoDetalle {
+        try decodificar(try await subirJPEG("/api/productos/\(productoId)/foto", jpeg: jpeg))
+    }
+
+    func agregarOpcion(productoId: Int, nombre: String) async throws -> OpcionProducto {
+        try decodificar(try await pedir("POST", "/api/productos/\(productoId)/opciones",
+                                        json: SoloNombre(nombre: nombre)))
+    }
+
+    func renombrarOpcion(id: Int, nombre: String) async throws -> OpcionProducto {
+        try decodificar(try await pedir("PATCH", "/api/opciones/\(id)", json: SoloNombre(nombre: nombre)))
+    }
+
+    /// 409 (ErrorAPI.servidor) si la opción ya tiene movimientos.
+    func borrarOpcion(id: Int) async throws {
+        _ = try await pedir("DELETE", "/api/opciones/\(id)")
+    }
+
+    /// Como enviarTanda: reenviar el mismo idCliente es seguro, y el 409 de
+    /// "parecida" solo puede llegar para una tanda.
+    func enviarMovimiento(_ movimiento: MovimientoNuevo, forzar: Bool = false) async throws -> ResultadoMovimiento {
+        do {
+            let datos = try await pedir("POST", "/api/movimientos", json: CuerpoMovimiento(movimiento, forzar: forzar))
+            return .guardado(try? decodificador.decode(Movimiento.self, from: datos))
+        } catch ErrorInterno.conflicto(let datos) {
+            if let r = try? decodificador.decode(RespuestaParecida.self, from: datos) {
+                return .parecida(r.parecida)
+            }
+            throw ErrorAPI.servidor(ClienteAPI.textoDeError(datos, codigo: 409))
+        }
+    }
+
+    func editarMovimiento(id: Int, _ cambios: CambiosTanda) async throws -> Movimiento {
+        try decodificar(try await pedir("PATCH", "/api/movimientos/\(id)", json: cambios))
+    }
+
+    func borrarMovimiento(id: Int) async throws {
+        _ = try await pedir("DELETE", "/api/movimientos/\(id)")
+    }
+
     // MARK: - Perfiles
 
     func perfiles() async throws -> [Perfil] {
@@ -234,7 +303,7 @@ final class ClienteAPI {
 
     // MARK: - Por dentro
 
-    /// Solo lo usa enviarTanda: un 409 que hay que leer antes de decidir si es error.
+    /// Solo lo usan enviarTanda y enviarMovimiento: un 409 que hay que leer antes de decidir si es error.
     private enum ErrorInterno: Error {
         case conflicto(Data)
     }
@@ -297,7 +366,7 @@ final class ClienteAPI {
         case 401 where conSesion:
             avisarSesionVencida(tokenUsado: token)
             throw ErrorAPI.sinSesion
-        case 409 where ruta == "/api/tandas" && metodo == "POST":
+        case 409 where (ruta == "/api/tandas" || ruta == "/api/movimientos") && metodo == "POST":
             throw ErrorInterno.conflicto(datos)
         case 502, 503, 504:
             // Es nginx diciendo que la app de atrás no contesta (reinicio,
@@ -383,6 +452,7 @@ final class ClienteAPI {
         case "tipo": return "el tipo"
         case "color": return "el color"
         case "moneda": return "la moneda"
+        case "hechos": return "los ya hechos"
         default: return "los datos"
         }
     }

@@ -77,12 +77,24 @@ struct PastillaRitmo: View {
     }
 }
 
-/// Foto del modelo o, si no tiene, sus iniciales sobre un color.
+/// Foto del modelo (o del producto) o, si no tiene, sus iniciales sobre un color.
 struct MiniaturaModelo: View {
-    let modelo: Modelo
+    let nombre: String
+    let fotoUrl: String?
     /// Posición en el pedido: elige el color de fondo sin foto.
     let indice: Int
     var lado: CGFloat = 44
+
+    init(nombre: String, fotoUrl: String?, indice: Int, lado: CGFloat = 44) {
+        self.nombre = nombre
+        self.fotoUrl = fotoUrl
+        self.indice = indice
+        self.lado = lado
+    }
+
+    init(modelo: Modelo, indice: Int, lado: CGFloat = 44) {
+        self.init(nombre: modelo.nombre, fotoUrl: modelo.fotoUrl, indice: indice, lado: lado)
+    }
 
     @State private var imagen: UIImage? = nil
 
@@ -96,7 +108,7 @@ struct MiniaturaModelo: View {
                     .scaledToFill()
             } else {
                 MiniaturaModelo.fondos[indice % MiniaturaModelo.fondos.count].opacity(0.2)
-                Text(Formato.iniciales(modelo.nombre))
+                Text(Formato.iniciales(nombre))
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.secondary)
                     .minimumScaleFactor(0.6)
@@ -105,8 +117,8 @@ struct MiniaturaModelo: View {
         }
         .frame(width: lado, height: lado)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .task(id: modelo.fotoUrl) {
-            guard let ruta = modelo.fotoUrl else {
+        .task(id: fotoUrl) {
+            guard let ruta = fotoUrl else {
                 imagen = nil
                 return
             }

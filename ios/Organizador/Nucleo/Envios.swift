@@ -64,7 +64,15 @@ final class Envios {
     /// toques sin señal).
     func pendienteParecida(modeloId: Int, cantidad: Int, cuando: Date) -> TandaPendiente? {
         pendientes.last { p in
-            p.modeloId == modeloId && ReglaParecida.esParecida(
+            p.opcionId == nil && p.modeloId == modeloId && ReglaParecida.esParecida(
+                cantidad: cantidad, cuando: cuando, otraCantidad: p.cantidad, otroCuando: p.cuando)
+        }
+    }
+
+    /// Lo mismo para la tanda de una opción de producto (las ventas no se preguntan).
+    func tandaParecida(opcionId: Int, cantidad: Int, cuando: Date) -> TandaPendiente? {
+        pendientes.last { p in
+            p.opcionId == opcionId && !p.esVenta && ReglaParecida.esParecida(
                 cantidad: cantidad, cuando: cuando, otraCantidad: p.cantidad, otroCuando: p.cuando)
         }
     }
@@ -110,10 +118,17 @@ final class Envios {
     /// Lo que entra a la cola ya pasó por "¿es otra tanda?" (o no había nada
     /// parecido), por eso va con forzar: true.
     nonisolated private static func enviar(_ pendiente: TandaPendiente) async -> ResultadoEnvio {
-        let tanda = TandaNueva(idCliente: pendiente.idCliente, modeloId: pendiente.modeloId,
-                               cantidad: pendiente.cantidad, cuando: pendiente.cuando)
         do {
-            _ = try await ClienteAPI.compartido.enviarTanda(tanda, forzar: true)
+            if let opcionId = pendiente.opcionId {
+                let movimiento = MovimientoNuevo(idCliente: pendiente.idCliente, opcionId: opcionId,
+                                                 tipo: pendiente.esVenta ? .venta : .tanda,
+                                                 cantidad: pendiente.cantidad, cuando: pendiente.cuando)
+                _ = try await ClienteAPI.compartido.enviarMovimiento(movimiento, forzar: true)
+            } else {
+                let tanda = TandaNueva(idCliente: pendiente.idCliente, modeloId: pendiente.modeloId,
+                                       cantidad: pendiente.cantidad, cuando: pendiente.cuando)
+                _ = try await ClienteAPI.compartido.enviarTanda(tanda, forzar: true)
+            }
             return .enviada
         } catch is CancellationError {
             return .detener

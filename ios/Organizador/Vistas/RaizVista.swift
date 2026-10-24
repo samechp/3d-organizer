@@ -1,4 +1,4 @@
-// La primera vista: sin sesión, la pantalla de entrar; con sesión, las tres
+// La primera vista: sin sesión, la pantalla de entrar; con sesión, las cuatro
 // pestañas. La barra de pestañas clásica toma el Liquid Glass sola en iOS 26.
 import SwiftUI
 
@@ -14,6 +14,8 @@ struct RaizVista: View {
                 TabView {
                     PedidosVista()
                         .tabItem { Label("Pedidos", systemImage: "shippingbox") }
+                    ProductosVista()
+                        .tabItem { Label("Productos", systemImage: "bag") }
                     CalculadoraVista()
                         .tabItem { Label("Calculadora", systemImage: "plus.forwardslash.minus") }
                     AjustesVista()

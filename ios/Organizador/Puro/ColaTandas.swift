@@ -21,6 +21,20 @@ struct TandaPendiente: Codable, Equatable {
     /// pedido. Opcional: las colas escritas antes de existir este campo se
     /// siguen leyendo.
     var nombreModelo: String? = nil
+    /// Con opción: es un movimiento de un producto (POST /api/movimientos) y
+    /// modeloId queda en 0. nil = tanda de un pedido, como las colas viejas.
+    var opcionId: Int? = nil
+    /// "venta" o "tanda"; solo cuenta si hay opcionId (nil se toma como tanda).
+    var tipo: String? = nil
+
+    var esVenta: Bool { tipo == "venta" }
+
+    /// Lo que suma (tanda) o resta (venta) al saldo de su opción mientras
+    /// espera en la cola. Una tanda de pedido no toca ningún saldo.
+    var cambioDeSaldo: Int {
+        guard opcionId != nil else { return 0 }
+        return esVenta ? -cantidad : cantidad
+    }
 }
 
 /// Una tanda que el servidor rechazó (el modelo ya no existe, una cantidad no

@@ -69,6 +69,24 @@ enum Almacen {
         return nil
     }
 
+    // MARK: - Productos
+
+    static func productos() -> [ProductoResumen]? {
+        leer([ProductoResumen].self, "productos.json")
+    }
+
+    static func guardarProductos(_ productos: [ProductoResumen]) {
+        escribir(productos, "productos.json")
+    }
+
+    static func producto(id: Int) -> ProductoDetalle? {
+        leer(ProductoDetalle.self, "producto-\(id).json")
+    }
+
+    static func guardarProducto(_ detalle: ProductoDetalle) {
+        escribir(detalle, "producto-\(detalle.id).json")
+    }
+
     // MARK: - Perfiles y filamentos
 
     /// Sin señal, la calculadora sale de aquí: por eso se guardan cada vez que
@@ -89,12 +107,13 @@ enum Almacen {
         escribir(filamentos, "filamentos.json")
     }
 
-    /// Borra la copia de los pedidos (al cerrar sesión). La cola sin señal,
+    /// Borra la copia de los pedidos y productos (al cerrar sesión). La cola sin señal,
     /// los perfiles y los filamentos se quedan: la app es de una sola cuenta y
     /// así la calculadora sirve sin señal apenas se vuelve a entrar.
     static func borrarTodo() {
         let archivos = (try? FileManager.default.contentsOfDirectory(at: carpeta, includingPropertiesForKeys: nil)) ?? []
-        for archivo in archivos where archivo.lastPathComponent.hasPrefix("pedido") {
+        for archivo in archivos where archivo.lastPathComponent.hasPrefix("pedido")
+            || archivo.lastPathComponent.hasPrefix("producto") {
             try? FileManager.default.removeItem(at: archivo)
         }
     }

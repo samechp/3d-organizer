@@ -285,6 +285,45 @@ pruebas.append(Prueba(nombre: "regla de 3 horas igual a la del servidor") {
     return fallos
 })
 
+pruebas.append(Prueba(nombre: "cola vieja sin opcionId se lee como tanda de pedido") {
+    let viejo = """
+    {"pendientes":[{"idCliente":"8F2D3B1C-0000-4000-8000-000000000003","modeloId":7,"cantidad":50,"cuando":800000000,"nombreModelo":"Medalla oro"}],"descartadas":[]}
+    """
+    let archivo = archivoTemporal()
+    do {
+        try Data(viejo.utf8).write(to: archivo)
+    } catch {
+        return ["no se pudo escribir el archivo de prueba"]
+    }
+    let p = ColaTandas(archivo: archivo) { _ in .detener }.pendientes.first
+    var fallos: [String] = []
+    if p?.modeloId != 7 || p?.cantidad != 50 { fallos.append("no leyó la pendiente vieja") }
+    if p?.opcionId != nil || p?.tipo != nil { fallos.append("opcionId y tipo deberían quedar en nil") }
+    if p?.cambioDeSaldo != 0 { fallos.append("una tanda de pedido no debería tocar saldos") }
+    return fallos
+})
+
+pruebas.append(Prueba(nombre: "un movimiento de producto se guarda y se relee igual") {
+    let archivo = archivoTemporal()
+    var venta = tandaDePrueba(2)
+    venta.modeloId = 0
+    venta.opcionId = 31
+    venta.tipo = "venta"
+    venta.nombreModelo = "Soporte · Negro"
+    var tanda = tandaDePrueba(20)
+    tanda.modeloId = 0
+    tanda.opcionId = 31
+    tanda.tipo = "tanda"
+    let cola = ColaTandas(archivo: archivo) { _ in .detener }
+    cola.agregar(venta)
+    cola.agregar(tanda)
+    let releida = ColaTandas(archivo: archivo) { _ in .detener }.pendientes
+    var fallos: [String] = []
+    if releida != [venta, tanda] { fallos.append("el movimiento releído no es el mismo") }
+    if releida.map({ $0.cambioDeSaldo }) != [-2, 20] { fallos.append("la venta debería restar y la tanda sumar") }
+    return fallos
+})
+
 // Corre todo y sale con código distinto de cero si algo falló.
 var huboFallas = false
 for prueba in pruebas {
