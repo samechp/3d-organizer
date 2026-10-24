@@ -9,7 +9,7 @@ settings:
     # 5.0 y no 6: el modo estricto de concurrencia de Swift 6 convierte en
     # errores avisos que en esta app no importan.
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0"
+    MARKETING_VERSION: "2.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   Organizador:
