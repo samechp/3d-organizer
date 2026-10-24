@@ -47,6 +47,11 @@ def motor_usuarios():
 
 metadata = MetaData()
 
+# El dueno se compara byte a byte: la intercalacion de la base (unicode_ci)
+# tomaria como iguales correos que solo difieren en tildes o mayusculas, y una
+# cuenta veria los datos de otra. SQLite (pruebas) ya compara asi.
+DUENO = String(120).with_variant(String(120, collation="utf8mb4_bin"), "mysql", "mariadb")
+
 # Solo guardamos el hash del token: si alguien lee la tabla no puede
 # usar las sesiones.
 sesiones = Table(
@@ -97,7 +102,7 @@ usuarios_tienda = Table(
 pedidos = Table(
     "pedidos", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("dueno", String(120), nullable=False),
+    Column("dueno", DUENO, nullable=False),
     Column("nombre", String(120), nullable=False),
     Column("cliente", String(120)),
     Column("entrega", Date),
@@ -137,7 +142,7 @@ tandas = Table(
 perfiles = Table(
     "perfiles", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("dueno", String(120), nullable=False),
+    Column("dueno", DUENO, nullable=False),
     Column("nombre", String(80), nullable=False),
     Column("precio_kwh", Numeric(14, 2), nullable=False),
     Column("consumo_watts", Numeric(14, 2), nullable=False),
@@ -161,7 +166,7 @@ filamentos = Table(
     Column("hex", String(7)),
     Column("precio_kg", Numeric(14, 2), nullable=False),
     Column("moneda", String(3), nullable=False),
-    Column("dueno", String(120), nullable=False),
+    Column("dueno", DUENO, nullable=False),
     Index("ix_filamentos_dueno", "dueno"),
 )
 

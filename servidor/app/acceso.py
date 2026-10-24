@@ -239,7 +239,7 @@ def yo(correo: str = Depends(usuario_actual)):
 #  Cuentas propias (las administra solo Juan)
 # ─────────────────────────────────────────────
 class CuentaNueva(BaseModel):
-    correo: str = Field(min_length=3, max_length=120, pattern=r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+    correo: str = Field(min_length=3, max_length=120, pattern=r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")  # solo ASCII: sin parecidos con tildes
     # Mismo minimo que la tienda: el largo es lo que cuesta romper.
     clave: str = Field(min_length=10, max_length=256)
 

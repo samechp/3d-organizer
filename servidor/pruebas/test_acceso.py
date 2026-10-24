@@ -309,3 +309,8 @@ def test_crear_cuenta_valida_datos(cliente_con_sesion):
 
 def test_usuarios_sin_sesion_401(cliente):
     assert cliente.get("/api/usuarios").status_code == 401
+
+
+def test_correo_de_cuenta_con_tilde_se_rechaza(cliente_con_sesion):
+    # La base compara sin tildes: 'jüan' chocaria con 'juan' y veria sus datos.
+    assert cliente_con_sesion.post("/api/usuarios", json={"correo": "jüan@ejemplo.com", "clave": "x" * 12}).status_code == 422

@@ -7,7 +7,7 @@
 -- Uso (ver montar.md, "Migracion: un dueno por renglon"): cambiar el correo de
 -- abajo y correr  sudo mariadb sistema < migracion-dueno.sql
 
-SET @dueno = 'PON_AQUI_EL_CORREO';
+SET @dueno = LOWER(TRIM('PON_AQUI_EL_CORREO'));
 
 -- Si se olvido poner el correo, se corta aqui: si no, todo quedaria a nombre
 -- de un correo que no existe y Juan dejaria de ver sus datos.
@@ -29,9 +29,9 @@ UPDATE pedidos SET dueno = @dueno WHERE dueno IS NULL;
 UPDATE perfiles SET dueno = @dueno WHERE dueno IS NULL;
 UPDATE filamentos SET dueno = @dueno WHERE dueno IS NULL;
 
-ALTER TABLE pedidos MODIFY dueno VARCHAR(120) NOT NULL;
-ALTER TABLE perfiles MODIFY dueno VARCHAR(120) NOT NULL;
-ALTER TABLE filamentos MODIFY dueno VARCHAR(120) NOT NULL;
+ALTER TABLE pedidos MODIFY dueno VARCHAR(120) COLLATE utf8mb4_bin NOT NULL;
+ALTER TABLE perfiles MODIFY dueno VARCHAR(120) COLLATE utf8mb4_bin NOT NULL;
+ALTER TABLE filamentos MODIFY dueno VARCHAR(120) COLLATE utf8mb4_bin NOT NULL;
 
 -- Mismos nombres que en base.py.
 CREATE INDEX IF NOT EXISTS ix_pedidos_dueno ON pedidos (dueno);
