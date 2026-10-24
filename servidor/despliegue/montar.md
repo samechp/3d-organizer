@@ -373,3 +373,10 @@ sudo rm /opt/sistema/.env
 # y repetir el bloque "2 y 3" (el ALTER USER pone las contrasenas nuevas en
 # MariaDB; despues: sudo systemctl restart sistema)
 ```
+
+## Migraciones aplicadas en producción
+
+Correr cada una con `sudo mariadb sistema < servidor/despliegue/<archivo>` ANTES del `desplegar.sh` que trae el código que la necesita, después de un `mysqldump` de respaldo.
+
+- `migracion-dueno.sql`: 2026-10-24.
+- `migracion-productos-id-cliente.sql`: 2026-10-24 (respaldo previo `/opt/sistema/respaldo-20261024-1432-antes-de-id-cliente.sql`).
