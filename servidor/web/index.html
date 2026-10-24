@@ -20,6 +20,7 @@
   </div>
   <div class="sesion" id="zona-sesion" hidden>
     <span class="sesion-correo" id="correo-sesion"></span>
+    <button type="button" class="boton-secundario" id="boton-usuarios" hidden>Usuarios</button>
     <button type="button" class="boton-secundario" id="boton-salir">Cerrar sesión</button>
   </div>
 </header>
@@ -139,6 +140,29 @@
     <div class="dialogo-botones">
       <button type="button" class="boton-secundario" id="pedido-cancelar">Cancelar</button>
       <button type="submit" class="boton" id="pedido-guardar">Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dialogo-usuarios" aria-labelledby="usuarios-titulo">
+  <form id="form-usuario">
+    <h2 id="usuarios-titulo">Usuarios</h2>
+    <p class="sub">Personas que pueden entrar a este sistema (no a la tienda). Ven y cambian lo mismo que tú, pero no pueden crear cuentas.</p>
+    <ul class="lista" id="lista-usuarios"></ul>
+    <p class="vacio" id="sin-usuarios" hidden>Todavía no hay nadie más.</p>
+    <fieldset>
+      <legend class="etiqueta">Agregar persona</legend>
+      <label class="eti"><span class="etiqueta">Correo</span>
+        <input class="campo" id="usuario-correo" type="email" maxlength="120" autocomplete="off" required>
+      </label>
+      <label class="eti"><span class="etiqueta">Contraseña (mínimo 10 caracteres)</span>
+        <input class="campo" id="usuario-clave" type="text" minlength="10" maxlength="256" autocomplete="off" required>
+      </label>
+    </fieldset>
+    <div class="mensaje-error" id="usuario-error" role="alert" hidden></div>
+    <div class="dialogo-botones">
+      <button type="button" class="boton-secundario" id="usuarios-cerrar">Cerrar</button>
+      <button type="submit" class="boton" id="usuario-crear">Agregar</button>
     </div>
   </form>
 </dialog>

@@ -71,6 +71,15 @@ intentos = Table(
     Index("ix_intentos_ip_momento", "ip", "momento"),
 )
 
+# Cuentas propias del sistema (ayudantes de Juan): no tienen cuenta en la tienda
+# ni la necesitan. Juan sigue entrando con la suya de PrintoVerse.
+usuarios_sistema = Table(
+    "usuarios", metadata,
+    Column("correo", String(120), primary_key=True),
+    Column("clave_hash", String(255), nullable=False),
+    Column("creado", DateTime, nullable=False),
+)
+
 # Vista de solo lectura de printoverse.usuarios, con las columnas que se usan.
 # Va en otro MetaData a proposito: asi crear_tablas() nunca intenta crearla en
 # la base de la tienda (ni podria: ese usuario MySQL solo tiene SELECT).

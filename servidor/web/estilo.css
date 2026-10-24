@@ -306,3 +306,5 @@ legend { padding: 0; margin-bottom: 6px; }
 }
 
 .nota-pedido { margin-top: 10px; }
+
+.fila-usuario { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; overflow-wrap: anywhere; }

@@ -67,7 +67,7 @@ def test_entra_juan(cliente, motores, con_juan):
     # El token sirve en una ruta protegida.
     yo = cliente.get("/api/yo", headers={"Authorization": f"Bearer {cuerpo['token']}"})
     assert yo.status_code == 200
-    assert yo.json() == {"correo": CORREO_JUAN}
+    assert yo.json() == {"correo": CORREO_JUAN, "dueno": True}
 
     # En la base solo queda la huella del token, nunca el token.
     with motores[0].connect() as con:
@@ -216,7 +216,7 @@ def test_sesion_de_un_correo_que_ya_no_es_el_permitido_no_sirve(cliente, motores
 def test_la_cookie_sirve_para_leer(cliente, motores):
     _sesion_directa(motores[0], "de-cookie")
     cliente.cookies.set("sesion", "de-cookie")
-    assert cliente.get("/api/yo").json() == {"correo": CORREO_JUAN}
+    assert cliente.get("/api/yo").json() == {"correo": CORREO_JUAN, "dueno": True}
 
 
 def test_cookie_sin_cabecera_x_sistema_403(cliente, motores):
@@ -255,4 +255,57 @@ def test_salir_sin_sesion_no_falla(cliente):
 
 
 def test_cliente_con_sesion_ya_esta_dentro(cliente_con_sesion):
-    assert cliente_con_sesion.get("/api/yo").json() == {"correo": CORREO_JUAN}
+    assert cliente_con_sesion.get("/api/yo").json() == {"correo": CORREO_JUAN, "dueno": True}
+
+
+# --- cuentas propias del sistema (ayudantes) --------------------------------
+
+AMIGO = "amigo@ejemplo.com"
+CLAVE_AMIGO = "clave-del-amigo-123"
+
+
+def test_juan_crea_cuenta_y_el_amigo_entra_sin_ser_dueno(cliente_con_sesion):
+    r = cliente_con_sesion.post("/api/usuarios", json={"correo": "Amigo@Ejemplo.com", "clave": CLAVE_AMIGO})
+    assert r.status_code == 201 and r.json() == {"correo": AMIGO}
+    assert [u["correo"] for u in cliente_con_sesion.get("/api/usuarios").json()] == [AMIGO]
+
+    del cliente_con_sesion.headers["Authorization"]
+    r = entrar(cliente_con_sesion, AMIGO, CLAVE_AMIGO)
+    assert r.status_code == 200
+    cabeceras = {"Authorization": f"Bearer {r.json()['token']}"}
+    assert cliente_con_sesion.get("/api/yo", headers=cabeceras).json() == {"correo": AMIGO, "dueno": False}
+    # Usa el sistema, pero no administra cuentas.
+    assert cliente_con_sesion.get("/api/pedidos", headers=cabeceras).status_code == 200
+    assert cliente_con_sesion.get("/api/usuarios", headers=cabeceras).status_code == 403
+    assert cliente_con_sesion.post("/api/usuarios", headers=cabeceras,
+                                   json={"correo": "otro@ejemplo.com", "clave": "x" * 12}).status_code == 403
+
+
+def test_amigo_con_clave_mala_no_entra(cliente_con_sesion):
+    cliente_con_sesion.post("/api/usuarios", json={"correo": AMIGO, "clave": CLAVE_AMIGO})
+    del cliente_con_sesion.headers["Authorization"]
+    r = entrar(cliente_con_sesion, AMIGO, "otra-clave-cualquiera")
+    assert r.status_code == 401 and r.json()["detail"] == MENSAJE
+
+
+def test_borrar_cuenta_corta_sus_sesiones(cliente_con_sesion):
+    cliente_con_sesion.post("/api/usuarios", json={"correo": AMIGO, "clave": CLAVE_AMIGO})
+    token_juan = cliente_con_sesion.headers.pop("Authorization")
+    cabeceras = {"Authorization": f"Bearer {entrar(cliente_con_sesion, AMIGO, CLAVE_AMIGO).json()['token']}"}
+    cliente_con_sesion.cookies.clear()
+    cliente_con_sesion.headers["Authorization"] = token_juan
+    assert cliente_con_sesion.delete(f"/api/usuarios/{AMIGO}").status_code == 204
+    assert cliente_con_sesion.get("/api/yo", headers=cabeceras).status_code == 401
+    assert cliente_con_sesion.delete(f"/api/usuarios/{AMIGO}").status_code == 404
+
+
+def test_crear_cuenta_valida_datos(cliente_con_sesion):
+    assert cliente_con_sesion.post("/api/usuarios", json={"correo": "no-es-correo", "clave": CLAVE_AMIGO}).status_code == 422
+    assert cliente_con_sesion.post("/api/usuarios", json={"correo": AMIGO, "clave": "corta"}).status_code == 422
+    assert cliente_con_sesion.post("/api/usuarios", json={"correo": CORREO_JUAN, "clave": CLAVE_AMIGO}).status_code == 409
+    cliente_con_sesion.post("/api/usuarios", json={"correo": AMIGO, "clave": CLAVE_AMIGO})
+    assert cliente_con_sesion.post("/api/usuarios", json={"correo": AMIGO, "clave": CLAVE_AMIGO}).status_code == 409
+
+
+def test_usuarios_sin_sesion_401(cliente):
+    assert cliente.get("/api/usuarios").status_code == 401

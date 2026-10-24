@@ -13,3 +13,4 @@ build/
 ios/Organizador/Info.plist
 ios/Payload/
 *.ipa
+graphify-out/

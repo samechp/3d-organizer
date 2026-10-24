@@ -57,11 +57,16 @@ def verificar_clave(clave: str, guardado: str) -> bool:
         return False
 
 
-def _huella_falsa() -> str:
+def cifrar_clave(clave: str) -> str:
+    """Huella scrypt en el mismo formato que la tienda, para las cuentas propias."""
     sal = secrets.token_bytes(16)
-    h = hashlib.scrypt(secrets.token_bytes(16), salt=sal, n=_N, r=_R, p=_P,
+    h = hashlib.scrypt(clave.encode("utf-8"), salt=sal, n=_N, r=_R, p=_P,
                        dklen=32, maxmem=128 * _N * _R * 2)
     return f"scrypt${_N}${_R}${_P}${sal.hex()}${h.hex()}"
+
+
+def _huella_falsa() -> str:
+    return cifrar_clave(secrets.token_urlsafe(16))
 
 
 # Se calcula una sola vez al importar, con los parametros reales. Cuando el
@@ -130,15 +135,21 @@ def acceso(datos: Credenciales, request: Request, response: Response):
 
     correo = _normalizar(datos.correo)
     fila = None
-    if correo == _permitido():
+    if correo and correo == _permitido():
         with request.app.state.motor_usuarios.connect() as con:
             fila = con.execute(
                 base.usuarios_tienda.select().where(base.usuarios_tienda.c.correo == correo)
             ).first()
+        cuenta_ok = fila is not None and fila.activo == 1 and fila.debe_cambiar == 0
+    else:
+        with motor.connect() as con:
+            fila = con.execute(
+                base.usuarios_sistema.select().where(base.usuarios_sistema.c.correo == correo)
+            ).first()
+        cuenta_ok = fila is not None
 
     # Siempre se corre scrypt, haya cuenta o no (ver HUELLA_FALSA).
     clave_ok = verificar_clave(datos.clave, fila.clave_hash if fila else HUELLA_FALSA)
-    cuenta_ok = fila is not None and fila.activo == 1 and fila.debe_cambiar == 0
 
     if not (clave_ok and cuenta_ok):
         with motor.begin() as con:
@@ -155,7 +166,7 @@ def acceso(datos: Credenciales, request: Request, response: Response):
     response.set_cookie(
         "sesion", token, max_age=int(DURACION_SESION.total_seconds()),
         httponly=True, secure=True, samesite="strict")
-    return {"token": token, "correo": correo}
+    return {"token": token, "correo": correo, "dueno": correo == _permitido()}
 
 
 def _token_de(request: Request):
@@ -188,11 +199,22 @@ def usuario_actual(request: Request) -> str:
         fila = con.execute(
             select(base.sesiones).where(base.sesiones.c.token_hash == _huella_token(token))
         ).first()
-    # Se comprueba tambien que el correo siga siendo el permitido: si algun dia
-    # se cambia la variable, las sesiones viejas de otro correo dejan de servir.
-    if fila is None or fila.expira <= _ahora() or fila.correo != _permitido():
+        # La cuenta tiene que seguir valiendo: si cambia el correo permitido o
+        # Juan borra a un ayudante, sus sesiones viejas dejan de servir.
+        vigente = fila is not None and (
+            fila.correo == _permitido()
+            or con.execute(select(base.usuarios_sistema.c.correo).where(
+                base.usuarios_sistema.c.correo == fila.correo)).first() is not None)
+    if not vigente or fila.expira <= _ahora():
         raise HTTPException(status_code=401, detail="Sesión no válida o vencida")
     return fila.correo
+
+
+def solo_dueno(correo: str = Depends(usuario_actual)) -> str:
+    """Dependencia: solo Juan (el correo permitido) administra las cuentas."""
+    if correo != _permitido():
+        raise HTTPException(status_code=403, detail="Solo el dueño puede hacer esto")
+    return correo
 
 
 @router.post("/api/salir")
@@ -210,4 +232,48 @@ def salir(request: Request, response: Response):
 def yo(correo: str = Depends(usuario_actual)):
     # Ruta minima protegida: la web y la app la usan para saber si la sesion
     # sigue valiendo, y las pruebas para probar la dependencia.
+    return {"correo": correo, "dueno": correo == _permitido()}
+
+
+# ─────────────────────────────────────────────
+#  Cuentas propias (las administra solo Juan)
+# ─────────────────────────────────────────────
+class CuentaNueva(BaseModel):
+    correo: str = Field(min_length=3, max_length=120, pattern=r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+    # Mismo minimo que la tienda: el largo es lo que cuesta romper.
+    clave: str = Field(min_length=10, max_length=256)
+
+
+@router.get("/api/usuarios")
+def listar_usuarios(request: Request, _: str = Depends(solo_dueno)):
+    with request.app.state.motor_sistema.connect() as con:
+        filas = con.execute(select(base.usuarios_sistema.c.correo, base.usuarios_sistema.c.creado)
+                            .order_by(base.usuarios_sistema.c.correo)).all()
+    return [{"correo": f.correo, "creado": f.creado.isoformat()} for f in filas]
+
+
+@router.post("/api/usuarios", status_code=201)
+def crear_usuario(datos: CuentaNueva, request: Request, _: str = Depends(solo_dueno)):
+    correo = _normalizar(datos.correo)
+    if correo == _permitido():
+        raise HTTPException(status_code=409, detail="Ese correo ya es el tuyo")
+    with request.app.state.motor_sistema.begin() as con:
+        if con.execute(select(base.usuarios_sistema.c.correo).where(
+                base.usuarios_sistema.c.correo == correo)).first():
+            raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese correo")
+        con.execute(base.usuarios_sistema.insert().values(
+            correo=correo, clave_hash=cifrar_clave(datos.clave), creado=_ahora()))
     return {"correo": correo}
+
+
+@router.delete("/api/usuarios/{correo}", status_code=204)
+def borrar_usuario(correo: str, request: Request, _: str = Depends(solo_dueno)):
+    correo = _normalizar(correo)
+    with request.app.state.motor_sistema.begin() as con:
+        borradas = con.execute(delete(base.usuarios_sistema).where(
+            base.usuarios_sistema.c.correo == correo)).rowcount
+        # Fuera tambien sus sesiones abiertas: el acceso se corta en ese momento.
+        con.execute(delete(base.sesiones).where(base.sesiones.c.correo == correo))
+    if not borradas:
+        raise HTTPException(status_code=404, detail="No existe esa cuenta")
+    return Response(status_code=204)

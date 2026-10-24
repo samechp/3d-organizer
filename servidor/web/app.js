@@ -246,13 +246,15 @@ function mostrarEntrar(mensaje) {
   porId('zona-sesion').hidden = true;
   porId('pantalla-entrar').hidden = false;
   if (porId('dialogo-pedido').open) porId('dialogo-pedido').close();
+  if (porId('dialogo-usuarios').open) porId('dialogo-usuarios').close();
   porId('entrar-clave').value = '';
   mostrarError('entrar-error', mensaje);
   porId('entrar-boton').disabled = false;
   (porId('entrar-correo').value ? porId('entrar-clave') : porId('entrar-correo')).focus();
 }
 
-function mostrarPanel(correo) {
+function mostrarPanel(correo, dueno) {
+  porId('boton-usuarios').hidden = !dueno;
   porId('pantalla-entrar').hidden = true;
   porId('pantalla-panel').hidden = false;
   porId('zona-sesion').hidden = false;
@@ -292,7 +294,7 @@ async function entrar(evento) {
   try {
     const r = await pedir('POST', '/api/acceso', { correo, clave }, { sinRedirigir: true });
     porId('entrar-clave').value = '';
-    mostrarPanel(r && r.correo);
+    mostrarPanel(r && r.correo, r && r.dueno);
     await iniciarPanel();
   } catch (e) {
     // Aquí un 401 es "correo o contraseña incorrectos" y sí se muestra.
@@ -1057,7 +1059,62 @@ async function iniciarPanel() {
   }
 }
 
+/* =========================================================================
+   Usuarios: cuentas propias del sistema (solo las ve y crea el dueño)
+   ========================================================================= */
+
+async function dibujarUsuarios() {
+  const lista = porId('lista-usuarios');
+  vaciar(lista);
+  const usuarios = await pedir('GET', '/api/usuarios');
+  porId('sin-usuarios').hidden = usuarios.length > 0;
+  for (const u of usuarios) {
+    lista.append(crear('li', { clase: 'fila-usuario' },
+      crear('span', { texto: u.correo }),
+      crear('button', {
+        type: 'button', clase: 'boton-secundario', texto: 'Quitar acceso',
+        'aria-label': 'Quitar acceso a ' + u.correo,
+        enclick: async () => {
+          if (!confirm('¿Quitar el acceso a ' + u.correo + '? Se cerrará su sesión.')) return;
+          try { await pedir('DELETE', '/api/usuarios/' + encodeURIComponent(u.correo)); await dibujarUsuarios(); }
+          catch (e) { mostrarError('usuario-error', e.message); }
+        },
+      })));
+  }
+}
+
+async function abrirUsuarios() {
+  mostrarError('usuario-error', '');
+  porId('usuario-correo').value = '';
+  porId('usuario-clave').value = '';
+  porId('dialogo-usuarios').showModal();
+  try { await dibujarUsuarios(); } catch (e) { mostrarError('usuario-error', e.message); }
+}
+
+async function crearUsuario(ev) {
+  ev.preventDefault();
+  mostrarError('usuario-error', '');
+  const boton = porId('usuario-crear');
+  boton.disabled = true;
+  try {
+    await pedir('POST', '/api/usuarios', {
+      correo: porId('usuario-correo').value.trim(),
+      clave: porId('usuario-clave').value,
+    });
+    porId('usuario-correo').value = '';
+    porId('usuario-clave').value = '';
+    await dibujarUsuarios();
+  } catch (e) {
+    mostrarError('usuario-error', e.message);
+  } finally {
+    boton.disabled = false;
+  }
+}
+
 function conectarEventos() {
+  porId('boton-usuarios').addEventListener('click', abrirUsuarios);
+  porId('usuarios-cerrar').addEventListener('click', () => porId('dialogo-usuarios').close());
+  porId('form-usuario').addEventListener('submit', crearUsuario);
   porId('form-entrar').addEventListener('submit', entrar);
   porId('boton-salir').addEventListener('click', salir);
 
@@ -1105,7 +1162,7 @@ async function arrancar() {
   conectarEventos();
   try {
     const yo = await pedir('GET', '/api/yo', undefined, { sinRedirigir: true });
-    mostrarPanel(yo && yo.correo);
+    mostrarPanel(yo && yo.correo, yo && yo.dueno);
     await iniciarPanel();
   } catch (e) {
     if (e instanceof ErrorApi && e.estado === 401) mostrarEntrar('');
