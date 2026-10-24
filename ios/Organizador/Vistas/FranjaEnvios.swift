@@ -1,4 +1,4 @@
-// Franja de "N tandas pendientes de enviar" y, si el servidor rechazó alguna
+// Franja de "N envíos pendientes" (tandas y ventas) y, si el servidor rechazó alguno
 // de la cola, el aviso con la lista y el motivo: nada se pierde en silencio.
 import SwiftUI
 
@@ -13,7 +13,7 @@ struct FranjaEnvios: View {
                 Button {
                     Task { await envios.vaciar() }
                 } label: {
-                    fila(texto: "\(Formato.num(n)) \(Formato.plural(n, "tanda pendiente", "tandas pendientes")) de enviar",
+                    fila(texto: "\(Formato.num(n)) \(Formato.plural(n, "envío pendiente", "envíos pendientes"))",
                          icono: "icloud.and.arrow.up", color: .acentoTexto)
                 }
                 .buttonStyle(.plain)
@@ -24,7 +24,7 @@ struct FranjaEnvios: View {
                 Button {
                     verDescartadas = true
                 } label: {
-                    fila(texto: "\(Formato.num(n)) \(Formato.plural(n, "tanda no se pudo guardar", "tandas no se pudieron guardar"))",
+                    fila(texto: "\(Formato.num(n)) \(Formato.plural(n, "envío no se pudo guardar", "envíos no se pudieron guardar"))",
                          icono: "exclamationmark.triangle.fill", color: .red)
                 }
                 .buttonStyle(.plain)
@@ -57,7 +57,7 @@ struct FranjaEnvios: View {
     }
 }
 
-/// Las tandas de la cola que el servidor no aceptó, con el motivo.
+/// Lo de la cola (tandas y ventas) que el servidor no aceptó, con el motivo.
 struct DescartadasVista: View {
     @Environment(Envios.self) private var envios
     @Environment(\.dismiss) private var cerrar
@@ -82,7 +82,7 @@ struct DescartadasVista: View {
                         .accessibilityElement(children: .combine)
                     }
                 } footer: {
-                    Text("Si el problema ya se arregló, vuelve a intentarlo. Si no, anótalas de nuevo en el pedido correcto y descártalas.")
+                    Text("Si el problema ya se arregló, vuelve a intentarlo. Si no, anótalo de nuevo donde corresponde y descártalo.")
                 }
 
                 Section {
@@ -113,14 +113,14 @@ struct DescartadasVista: View {
                     .accessibilityLabel("Cerrar")
                 }
             }
-            .confirmationDialog("¿Descartar estas tandas?", isPresented: $confirmarOlvido, titleVisibility: .visible) {
+            .confirmationDialog("¿Descartar estos envíos?", isPresented: $confirmarOlvido, titleVisibility: .visible) {
                 Button("Descartar", role: .destructive) {
                     envios.olvidarDescartadas()
                     cerrar()
                 }
                 Button("Cancelar", role: .cancel) {}
             } message: {
-                Text("No se van a sumar al avance de ningún pedido.")
+                Text("No se van a contar en ningún pedido ni producto.")
             }
         }
     }

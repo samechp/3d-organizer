@@ -180,7 +180,11 @@ productos = Table(
     Column("nombre", String(120), nullable=False),
     Column("foto", String(80)),
     Column("creado", DateTime, nullable=False),
+    # UUID de la app al crear: un reintento tras un timeout no duplica el
+    # producto ni su stock inicial. NULL en los creados sin el (web, viejos).
+    Column("id_cliente", CHAR(36)),
     Index("ix_productos_dueno", "dueno"),
+    Index("ux_productos_id_cliente", "id_cliente", unique=True),
 )
 
 opciones = Table(

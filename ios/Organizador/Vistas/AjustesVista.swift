@@ -246,7 +246,7 @@ struct AjustesVista: View {
         let n = envios.pendientes.count
         let volver = "Para volver a usar la app tendrás que entrar con tu correo y contraseña."
         guard n > 0 else { return volver }
-        return "Tienes \(Formato.num(n)) \(Formato.plural(n, "tanda sin enviar", "tandas sin enviar")). "
+        return "Tienes \(Formato.num(n)) \(Formato.plural(n, "envío pendiente", "envíos pendientes")). "
             + "No se pierden: se envían cuando vuelvas a entrar, pero mientras tanto no aparecen en la web. "
             + volver
     }

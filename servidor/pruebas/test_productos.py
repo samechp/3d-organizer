@@ -223,3 +223,34 @@ def test_id_cliente_de_otra_cuenta_da_409(cliente_con_sesion, cabeceras_amigo):
     suya = _producto(c, headers=a)["opciones"][0]["id"]
     r = _mov(c, suya, "venta", 1, headers=a, json={"id_cliente": id_cliente})
     assert r.status_code == 409 and "id" not in r.json()
+
+
+def test_crear_dos_veces_con_el_mismo_id_cliente_da_un_solo_producto(cliente_con_sesion):
+    c = cliente_con_sesion
+    id_cliente = str(uuid.uuid4()).upper()
+    cuerpo = {"nombre": "Soporte", "opciones": [{"nombre": "Negro", "hechos": 10}], "id_cliente": id_cliente}
+    primero = c.post("/api/productos", json=cuerpo)
+    assert primero.status_code == 201, primero.text
+    # El reintento (en minusculas o mayusculas da igual) devuelve el mismo, sin sumar stock.
+    cuerpo["id_cliente"] = id_cliente.lower()
+    otra = c.post("/api/productos", json=cuerpo)
+    assert otra.status_code == 200 and otra.json()["id"] == primero.json()["id"]
+    assert len(c.get("/api/productos").json()) == 1
+    assert _saldos(c, primero.json()["id"]) == {"Negro": 10}
+
+
+def test_crear_sin_id_cliente_sigue_sirviendo_dos_veces(cliente_con_sesion):
+    c = cliente_con_sesion
+    _producto(c)
+    _producto(c)
+    assert len(c.get("/api/productos").json()) == 2
+
+
+def test_id_cliente_de_producto_de_otra_cuenta_da_409(cliente_con_sesion, cabeceras_amigo):
+    c, a = cliente_con_sesion, cabeceras_amigo
+    id_cliente = str(uuid.uuid4())
+    cuerpo = {"nombre": "Soporte", "opciones": [{"nombre": "Negro"}], "id_cliente": id_cliente}
+    assert c.post("/api/productos", json=cuerpo).status_code == 201
+    r = c.post("/api/productos", json=cuerpo, headers=a)
+    assert r.status_code == 409 and "id" not in r.json()
+    assert c.get("/api/productos", headers=a).json() == []

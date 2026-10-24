@@ -41,6 +41,8 @@ class OpcionNueva(BaseModel):
 class ProductoNuevo(BaseModel):
     nombre: pedidos.Nombre
     opciones: list[OpcionNueva] = Field(min_length=1, max_length=MAX_OPCIONES)
+    # Opcional: con el, crear dos veces lo mismo (reintento) da un solo producto.
+    id_cliente: pedidos.IdCliente | None = None
 
 
 class ProductoCambios(BaseModel):
@@ -193,13 +195,35 @@ def listar_productos(request: Request, correo: pedidos.Correo):
     return [_resumen_json(p, opciones[p.id]) for p in filas]
 
 
+def _producto_por_id_cliente(con, id_cliente: str | None, correo: str) -> int | None:
+    """Id del producto ya creado con ese id_cliente, o None.
+
+    Como en movimientos: el de otra cuenta es conflicto, sin datos de ella.
+    """
+    if id_cliente is None:
+        return None
+    fila = con.execute(select(base.productos.c.id, base.productos.c.dueno)
+                       .where(base.productos.c.id_cliente == id_cliente)).first()
+    if fila is None:
+        return None
+    if fila.dueno != correo:
+        raise HTTPException(status_code=409, detail="Ese id_cliente ya está en uso")
+    return fila.id
+
+
 @router.post("/api/productos", status_code=201)
-def crear_producto(datos: ProductoNuevo, request: Request, correo: pedidos.Correo):
+def crear_producto(datos: ProductoNuevo, request: Request, response: Response, correo: pedidos.Correo):
     ahora = pedidos.ahora_bogota()
+    motor = request.app.state.motor_sistema
     try:
-        with request.app.state.motor_sistema.begin() as con:
+        with motor.begin() as con:
+            existente = _producto_por_id_cliente(con, datos.id_cliente, correo)
+            if existente is not None:
+                response.status_code = 200
+                return _detalle(con, existente, correo)
             producto_id = con.execute(base.productos.insert().values(
-                dueno=correo, nombre=datos.nombre, creado=ahora)).inserted_primary_key[0]
+                dueno=correo, nombre=datos.nombre, creado=ahora,
+                id_cliente=datos.id_cliente)).inserted_primary_key[0]
             for i, o in enumerate(datos.opciones):
                 opcion_id = con.execute(base.opciones.insert().values(
                     producto_id=producto_id, nombre=o.nombre, orden=i)).inserted_primary_key[0]
@@ -211,7 +235,13 @@ def crear_producto(datos: ProductoNuevo, request: Request, correo: pedidos.Corre
                         id_cliente=str(uuid.uuid4()), creada=ahora))
             return _detalle(con, producto_id, correo)
     except IntegrityError:
-        # Lo unico que puede chocar aqui son dos opciones con el mismo nombre.
+        # Dos envios del mismo producto a la vez: al perdedor se le da el ganador.
+        # Si no, lo que choco fueron dos opciones con el mismo nombre.
+        with motor.connect() as con:
+            existente = _producto_por_id_cliente(con, datos.id_cliente, correo)
+            if existente is not None:
+                response.status_code = 200
+                return _detalle(con, existente, correo)
         raise HTTPException(status_code=409, detail=NOMBRE_REPETIDO)
 
 

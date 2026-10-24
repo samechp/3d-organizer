@@ -34,6 +34,8 @@ struct NuevoProductoVista: View {
     /// El producto ya creado en un intento anterior que falló después (la
     /// foto, por ejemplo): el reintento lo completa en vez de crear otro.
     @State private var creado: ProductoDetalle? = nil
+    /// Uno por formulario y el mismo en cada intento de crear.
+    @State private var idCliente = UUID()
     @State private var eleccion: PhotosPickerItem? = nil
     /// JPEG reducido, listo para subir.
     @State private var foto: Data? = nil
@@ -255,7 +257,7 @@ struct NuevoProductoVista: View {
             } else {
                 let nuevo = ProductoNuevo(nombre: limpio(nombre), opciones: opciones.map {
                     OpcionNueva(nombre: limpio($0.nombre), hechos: hechos($0.hechos))
-                })
+                }, idCliente: idCliente.uuidString.lowercased())
                 let hecho = try await ClienteAPI.compartido.crearProducto(nuevo)
                 creado = hecho
                 originales = hecho.opciones

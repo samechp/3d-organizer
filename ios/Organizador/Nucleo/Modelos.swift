@@ -508,6 +508,9 @@ struct OpcionNueva: Codable, Hashable {
 struct ProductoNuevo: Codable, Hashable {
     var nombre: String
     var opciones: [OpcionNueva]
+    /// UUID en minúsculas, fijo por formulario: un reintento tras un timeout
+    /// devuelve el mismo producto en vez de crear otro.
+    var idCliente: String? = nil
 }
 
 /// Para PATCH /api/productos/{id} y para crear o renombrar una opción.

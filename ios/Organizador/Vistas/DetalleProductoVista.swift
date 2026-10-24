@@ -22,6 +22,8 @@ struct DetalleProductoVista: View {
     @State private var enVuelo: [TandaPendiente] = []
     /// Sube con cada venta o tanda guardada: dispara la háptica de éxito.
     @State private var guardadas = 0
+    /// Sube cuando el servidor rechaza una venta de un toque: háptica de error.
+    @State private var rechazadas = 0
     @State private var eleccionFoto: PhotosPickerItem? = nil
     @State private var subiendoFoto = false
 
@@ -96,6 +98,7 @@ struct DetalleProductoVista: View {
             Task { await subirFoto(nueva) }
         }
         .sensoryFeedback(.success, trigger: guardadas)
+        .sensoryFeedback(.error, trigger: rechazadas)
         .sheet(item: $hoja) { h in
             if let d = visto {
                 AnotarMovimientoVista(detalle: d, opcionInicial: h.opcionId, tipoInicial: h.tipo) { enCola in
@@ -299,14 +302,18 @@ struct DetalleProductoVista: View {
                                        cuando: movimiento.cuando ?? Date(),
                                        nombreModelo: "\(d.nombre) · \(o.nombre) (venta)",
                                        opcionId: o.id, tipo: TipoMovimiento.venta.rawValue)
+        // Se ve restada al momento; la háptica y el aviso esperan a que quede
+        // guardada o en la cola.
         enVuelo.append(pendiente)
-        guardadas += 1
         mensaje = nil
-        UIAccessibility.post(notification: .announcement,
-                             argument: "Venta anotada. \(o.nombre): \(Formato.saldo(o.saldo - 1, ceroLargo: true))")
+        let anotada = "Venta anotada. \(o.nombre): \(Formato.saldo(o.saldo - 1, ceroLargo: true))"
         // Se toma ya: si la sesión vence, la vista se va a mitad del envío.
         let cola = envios
         Task {
+            // Lo que no es un rechazo del servidor (sin red, sesión vencida, 5xx,
+            // 408, 429, cancelada) va a la cola con el mismo id: si sí había
+            // llegado, el servidor no la cuenta dos veces.
+            var guardada = true
             do {
                 _ = try await ClienteAPI.compartido.enviarMovimiento(movimiento)
                 await cargar()
@@ -314,11 +321,20 @@ struct DetalleProductoVista: View {
                 cola.agregar(pendiente)
             } catch ErrorAPI.sinSesion {
                 cola.agregar(pendiente)
+            } catch ErrorAPI.temporal {
+                cola.agregar(pendiente)
             } catch is CancellationError {
-                // Pudo llegar o no: en la cola, el mismo id no se cuenta dos veces.
                 cola.agregar(pendiente)
             } catch {
-                if let texto = error.textoParaMostrar { mensaje = "No se anotó la venta: \(texto)" }
+                guardada = false
+                let texto = error.textoParaMostrar ?? "Inténtalo de nuevo."
+                mensaje = "No se anotó la venta: \(texto)"
+                rechazadas += 1
+                UIAccessibility.post(notification: .announcement, argument: "No se anotó la venta de \(o.nombre). \(texto)")
+            }
+            if guardada {
+                guardadas += 1
+                UIAccessibility.post(notification: .announcement, argument: anotada)
             }
             // Después de cargar o de encolar: así la venta nunca se ve dos veces ni desaparece un momento.
             enVuelo.removeAll { $0.idCliente == pendiente.idCliente }
