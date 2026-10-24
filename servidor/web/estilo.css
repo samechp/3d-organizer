@@ -308,3 +308,42 @@ legend { padding: 0; margin-bottom: 6px; }
 .nota-pedido { margin-top: 10px; }
 
 .fila-usuario { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; overflow-wrap: anywhere; }
+
+/* ---------- Pestañas Pedidos | Productos ---------- */
+.secciones { display: flex; gap: 4px; padding: 3px; margin-left: 8px; border-radius: 22px; background: var(--boton-suave); }
+.secciones a {
+  min-height: 38px; display: flex; align-items: center; padding: 0 14px; border-radius: 19px;
+  color: var(--texto-medio); font-weight: 600;
+}
+.secciones a:hover { text-decoration: none; color: var(--texto); }
+.secciones a[aria-current="page"] { background: var(--tarjeta); color: var(--texto); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); }
+
+/* ---------- Productos ---------- */
+.lateral-grupo { display: flex; flex-direction: column; gap: 10px; }
+.por-imprimir { list-style: none; margin: 0; padding: 4px 14px; gap: 0; }
+.fila-falta {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  min-height: 44px; padding: 10px 0; color: var(--texto); border-top: 1px solid var(--linea-suave);
+}
+.fila-falta:hover { text-decoration: none; }
+.por-imprimir li:first-child .fila-falta { border-top: 0; }
+.fila-falta span { overflow-wrap: anywhere; }
+.fila-falta b { color: var(--aviso-texto); white-space: nowrap; }
+.producto-cabecera { display: flex; align-items: center; gap: 14px; min-width: 0; }
+#tarjetas-opciones { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 0; }
+.opcion { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 14px; background: var(--subtarjeta); min-width: 0; }
+.opcion b { overflow-wrap: anywhere; }
+.opcion .insignia { align-self: flex-start; font-variant-numeric: tabular-nums; }
+.insignia.neutro { background: var(--pista); color: var(--texto-medio); }
+.form-tanda .c-tipo { flex: 1 1 160px; }
+.fila-opcion-saldo { min-height: 44px; display: flex; align-items: center; color: var(--suave); font-size: 14px; }
+
+.tabla-desliza { overflow-x: auto; }
+.tabla-movs { width: 100%; min-width: 480px; border-collapse: collapse; }
+.tabla-movs th { text-align: left; padding: 8px; font-size: 13px; font-weight: 600; color: var(--suave); }
+.tabla-movs td { padding: 10px 8px; border-top: 1px solid var(--linea-suave); vertical-align: middle; }
+.tabla-movs .cuando { color: var(--texto-medio); }
+.tabla-movs .cantidad { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tabla-movs td.cantidad.suma { color: var(--verde-texto); }
+.tabla-movs .botones { text-align: right; white-space: nowrap; }
+.tabla-movs .botones button + button { margin-left: 6px; }

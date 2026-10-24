@@ -171,6 +171,48 @@ filamentos = Table(
 )
 
 
+# Productos de catalogo que se venden poco a poco. Como en pedidos, el dueno va
+# solo en el producto: opciones y movimientos llegan a el por su producto.
+productos = Table(
+    "productos", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("dueno", DUENO, nullable=False),
+    Column("nombre", String(120), nullable=False),
+    Column("foto", String(80)),
+    Column("creado", DateTime, nullable=False),
+    Index("ix_productos_dueno", "dueno"),
+)
+
+opciones = Table(
+    "opciones", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("producto_id", Integer, ForeignKey("productos.id"), nullable=False),
+    Column("nombre", String(80), nullable=False),
+    Column("orden", Integer, nullable=False, server_default="0"),
+    # Dos "Rojo" en el mismo producto no se podrian distinguir al anotar. Este
+    # indice empieza por producto_id, asi que tambien sirve para buscar las
+    # opciones de un producto: no hace falta otro.
+    UniqueConstraint("producto_id", "nombre", name="ux_opciones_producto_nombre"),
+)
+
+# Lo que suma (tanda impresa) y lo que resta (venta). El saldo no se guarda: se
+# suma en SQL, asi corregir o borrar un movimiento nunca lo deja desfasado.
+movimientos = Table(
+    "movimientos", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("opcion_id", Integer, ForeignKey("opciones.id"), nullable=False),
+    Column("tipo", String(5), nullable=False),
+    Column("cantidad", Integer, nullable=False),
+    # Hora de Bogota sin zona, como tandas.cuando.
+    Column("cuando", DateTime, nullable=False),
+    # Igual que en tandas: el UUID de la app hace que un reenvio no cuente dos veces.
+    Column("id_cliente", CHAR(36), nullable=False, unique=True),
+    Column("creada", DateTime, nullable=False),
+    CheckConstraint("tipo IN ('venta', 'tanda')", name="ck_movimientos_tipo"),
+    Index("ix_movimientos_opcion", "opcion_id"),
+)
+
+
 def crear_tablas(motor):
     """Crea lo que falte. Se puede llamar en cada arranque: no toca lo existente."""
     metadata.create_all(motor)

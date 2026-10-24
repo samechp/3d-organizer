@@ -1,5 +1,5 @@
 """
-fotos.py - Foto de cada modelo de un pedido.
+fotos.py - Foto de cada modelo de un pedido y de cada producto.
 
 Las fotos viven en una carpeta del servidor (SISTEMA_FOTOS), no en la base. Cada
 archivo se llama como el hash de su contenido: la misma foto subida dos veces
@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select, update
 
-from . import base, pedidos
+from . import base, pedidos, productos
 from .acceso import usuario_actual
 
 # Todas las rutas piden sesion: las fotos de los pedidos no son publicas.
@@ -115,19 +115,39 @@ def subir_foto(modelo_id: pedidos.IdRuta, foto: UploadFile, request: Request,
         return pedidos._modelo_con_hechas(con, modelo_id, correo)
 
 
+@router.put("/api/productos/{producto_id}/foto")
+def subir_foto_producto(producto_id: pedidos.IdRuta, foto: UploadFile, request: Request,
+                        correo: pedidos.Correo):
+    # Igual que la de un modelo, pero colgada del producto.
+    motor = request.app.state.motor_sistema
+    with motor.connect() as con:
+        productos._producto_o_404(con, producto_id, correo)
+
+    contenido, ext = _leer_foto(foto.file)
+    nombre = f"{hashlib.sha256(contenido).hexdigest()}.{ext}"
+    _guardar(contenido, nombre)
+
+    with motor.begin() as con:
+        con.execute(update(base.productos).where(base.productos.c.id == producto_id).values(foto=nombre))
+        return productos._detalle(con, producto_id, correo)
+
+
 @router.get("/api/fotos/{nombre}")
 def ver_foto(nombre: str, request: Request, correo: pedidos.Correo):
     # Cualquier cosa que no sea un nombre de los que genera subir_foto es 404,
     # sin tocar el disco: asi no hay forma de salirse de la carpeta.
     if not NOMBRE_VALIDO.fullmatch(nombre):
         raise HTTPException(status_code=404, detail="No existe esa foto")
-    # Solo se sirve si algun modelo de quien la pide la usa: la foto de otra
-    # cuenta da 404 aunque el archivo exista.
+    # Solo se sirve si algun modelo o producto de quien la pide la usa: la foto
+    # de otra cuenta da 404 aunque el archivo exista.
     with request.app.state.motor_sistema.connect() as con:
         suya = con.execute(
             select(base.modelos.c.id)
             .select_from(base.modelos.join(base.pedidos, base.pedidos.c.id == base.modelos.c.pedido_id))
             .where(base.modelos.c.foto == nombre, base.pedidos.c.dueno == correo).limit(1)).first()
+        if suya is None:
+            suya = con.execute(select(base.productos.c.id).where(
+                base.productos.c.foto == nombre, base.productos.c.dueno == correo).limit(1)).first()
     if suya is None:
         raise HTTPException(status_code=404, detail="No existe esa foto")
     ruta = carpeta_fotos() / nombre

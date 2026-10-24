@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
-from . import acceso, base, fotos, pedidos, perfiles
+from . import acceso, base, fotos, pedidos, perfiles, productos
 
 
 def crear_app(motor_sistema, motor_usuarios) -> FastAPI:
@@ -28,6 +28,7 @@ def crear_app(motor_sistema, motor_usuarios) -> FastAPI:
     app.include_router(acceso.router)
     app.include_router(pedidos.router)
     app.include_router(perfiles.router)
+    app.include_router(productos.router)
     app.include_router(fotos.router)
 
     @app.get("/health")

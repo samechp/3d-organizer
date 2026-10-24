@@ -146,6 +146,7 @@ const CAMPOS = {
   cantidad: 'Buenas', cuando: 'Fecha y hora', nombre: 'Nombre', cliente: 'Cliente',
   entrega: 'Entrega', nota: 'Nota', meta: 'Meta', modelos: 'Modelos', modelo_id: 'Modelo',
   correo: 'Correo', clave: 'Contraseña', foto: 'Foto', id_cliente: 'Identificador',
+  opcion_id: 'Opción', opciones: 'Opciones', tipo: 'Qué', hechos: 'Ya hechos',
 };
 
 function textoValidacion(fallo) {
@@ -235,6 +236,7 @@ const estado = {
   aviso: null,            // la tanda parecida que mandó el 409
   enviando: false,
   dialogo: null,          // {modo: 'nuevo'|'editar', filas: [...]}
+  seccion: null,          // 'pedidos' o 'productos': la pestaña que se ve
 };
 
 /* =========================================================================
@@ -243,9 +245,12 @@ const estado = {
 
 function mostrarEntrar(mensaje) {
   porId('pantalla-panel').hidden = true;
+  porId('pantalla-productos').hidden = true;
+  porId('secciones').hidden = true;
   porId('zona-sesion').hidden = true;
   porId('pantalla-entrar').hidden = false;
   if (porId('dialogo-pedido').open) porId('dialogo-pedido').close();
+  if (porId('dialogo-producto').open) porId('dialogo-producto').close();
   if (porId('dialogo-usuarios').open) porId('dialogo-usuarios').close();
   porId('entrar-clave').value = '';
   mostrarError('entrar-error', mensaje);
@@ -256,7 +261,7 @@ function mostrarEntrar(mensaje) {
 function mostrarPanel(correo, dueno) {
   porId('boton-usuarios').hidden = !dueno;
   porId('pantalla-entrar').hidden = true;
-  porId('pantalla-panel').hidden = false;
+  porId('secciones').hidden = false;
   porId('zona-sesion').hidden = false;
   porId('correo-sesion').textContent = correo || '';
 }
@@ -271,12 +276,19 @@ function reiniciarEstado() {
   estado.intento = null;
   estado.aviso = null;
   estado.verTerminados = false;
+  estado.seccion = null;
+  prod.lista = [];
+  prod.productoId = null;
+  prod.detalle = null;
+  prod.formProductoId = null;
+  prod.intento = null;
+  prod.aviso = null;
 }
 
 // La sesión venció (401 en cualquier petición). Si varias peticiones fallan a la
-// vez, solo la primera encuentra el panel visible y hace el cambio.
+// vez, solo la primera encuentra la sesión visible y hace el cambio.
 function sesionVencida() {
-  if (porId('pantalla-panel').hidden) return;
+  if (porId('zona-sesion').hidden) return;
   reiniciarEstado();
   mostrarEntrar('Tu sesión venció. Entra de nuevo.');
 }
@@ -1046,16 +1058,682 @@ async function subirFoto(modelo, archivo) {
 }
 
 /* =========================================================================
-   11. Arranque
+   11. Productos: stock por opción (las tandas suman, las ventas restan)
    ========================================================================= */
 
-async function iniciarPanel() {
-  mostrarError('error-general', '');
+const MAX_OPCIONES = 50;
+
+const prod = {
+  lista: [],              // GET /api/productos
+  productoId: null,       // producto que se está viendo
+  detalle: null,          // GET /api/productos/{id} (con los últimos 30 movimientos)
+  formProductoId: null,   // producto para el que está preparado el formulario de anotar
+  cuandoTocado: false,    // false = "ahora": no se manda fecha y manda el servidor
+  intento: null,          // {id, opcionId, tipo, cantidad, cuando}: el envío en curso
+  aviso: null,            // la tanda parecida que mandó el 409
+  enviando: false,
+  dialogo: null,          // {modo: 'nuevo'|'editar', filas: [...]}
+};
+
+function idProductoDeHash() {
+  const m = /^#productos\/(\d+)$/.exec(location.hash);
+  return m ? Number(m[1]) : null;
+}
+
+// Saldo de una opción: positivo es stock, negativo lo que falta imprimir.
+function saldoTexto(saldo) {
+  if (saldo > 0) return `${num(saldo)} en stock`;
+  if (saldo < 0) return `Faltan ${num(-saldo)}`;
+  return '0';
+}
+
+function resumenProducto(p) {
+  const partes = [];
+  if (p.faltan > 0) partes.push(`Faltan ${num(p.faltan)}`);
+  if (p.stock > 0) partes.push(`${num(p.stock)} en stock`);
+  return partes.join(' · ') || 'Sin stock';
+}
+
+function dibujarListaProductos() {
+  // "Por imprimir": las opciones en negativo de todos los productos, la que más falta primero.
+  const faltantes = [];
+  prod.lista.forEach((p) => p.opciones.forEach((o) => { if (o.saldo < 0) faltantes.push({ p, o }); }));
+  faltantes.sort((a, b) => a.o.saldo - b.o.saldo);
+  const porImprimir = porId('lista-por-imprimir');
+  vaciar(porImprimir);
+  faltantes.forEach(({ p, o }) => porImprimir.append(crear('li', null,
+    crear('a', { clase: 'fila-falta', href: `#productos/${p.id}` },
+      crear('span', { texto: `${p.nombre} · ${o.nombre}` }),
+      crear('b', { texto: `Faltan ${num(-o.saldo)}` })))));
+  porImprimir.hidden = faltantes.length === 0;
+  porId('nada-por-imprimir').hidden = faltantes.length > 0;
+  porId('zona-por-imprimir').hidden = prod.lista.length === 0;
+
+  const lista = porId('lista-productos');
+  vaciar(lista);
+  prod.lista.forEach((p) => lista.append(crear('li', null,
+    crear('a', {
+      clase: 'pedido-item', href: `#productos/${p.id}`,
+      'aria-current': p.id === prod.productoId ? 'page' : false,
+    },
+      crear('span', { clase: 'nombre', texto: p.nombre }),
+      crear('span', { clase: 'detalle', texto: resumenProducto(p) })))));
+  porId('sin-productos').hidden = prod.lista.length > 0;
+}
+
+async function cargarProductos() {
+  prod.lista = await pedir('GET', '/api/productos');
+  dibujarListaProductos();
+}
+
+function dibujarFotoProducto(d) {
+  const foto = porId('producto-foto');
+  vaciar(foto);
+  foto.setAttribute('aria-hidden', d.foto_url ? 'false' : 'true');
+  if (d.foto_url) {
+    const img = crear('img', { src: d.foto_url, alt: `Foto de ${d.nombre}`, loading: 'lazy' });
+    img.addEventListener('error', () => { img.remove(); foto.textContent = 'Sin foto'; });
+    foto.append(img);
+  } else {
+    foto.textContent = 'Sin foto';
+  }
+  const boton = porId('boton-foto-producto');
+  boton.textContent = d.foto_url ? 'Cambiar foto' : 'Subir foto';
+  boton.setAttribute('aria-label', `${d.foto_url ? 'Cambiar' : 'Subir'} foto de ${d.nombre}`);
+}
+
+function dibujarProducto() {
+  const d = prod.detalle;
+  const hay = !!d;
+  for (const id of ['producto-detalle', 'caja-opciones', 'caja-anotar', 'caja-movimientos']) porId(id).hidden = !hay;
+  if (!hay) return;
+  porId('producto-titulo').textContent = d.nombre;
+  porId('producto-sub').textContent = resumenProducto(d);
+  dibujarFotoProducto(d);
+
+  const cont = porId('tarjetas-opciones');
+  vaciar(cont);
+  d.opciones.forEach((o) => {
+    const clase = o.saldo > 0 ? ' completo' : (o.saldo < 0 ? '' : ' neutro');
+    cont.append(crear('div', { clase: 'opcion' },
+      crear('b', { texto: o.nombre }),
+      crear('span', { clase: 'insignia' + clase, texto: saldoTexto(o.saldo) })));
+  });
+  prepararFormularioMov(d);
+  dibujarMovimientos();
+}
+
+async function cargarDetalleProducto(id) {
+  const detalle = await pedir('GET', `/api/productos/${id}`);
+  if (id !== prod.productoId) return; // el usuario ya eligió otro producto
+  prod.detalle = detalle;
+  dibujarProducto();
+}
+
+async function seleccionarProducto(id, opciones = {}) {
+  prod.productoId = id;
+  prod.detalle = null;
+  mostrarError('error-productos', '');
+  dibujarListaProductos();
   try {
-    await cargarPedidos();
-    await elegirPedidoInicial();
+    await cargarDetalleProducto(id);
+    if (opciones.desplazar) {
+      porId('principal-productos').scrollIntoView({ block: 'start' });
+      porId('producto-titulo').focus({ preventScroll: true });
+    }
   } catch (e) {
-    manejarError(e, 'error-general');
+    if (e instanceof ErrorApi && e.estado === 404) {
+      prod.productoId = null;
+      try {
+        await cargarProductos();
+        await elegirProductoInicial();
+      } catch (e2) {
+        manejarError(e2, 'error-productos');
+      }
+      return;
+    }
+    dibujarProducto();
+    manejarError(e, 'error-productos');
+  }
+}
+
+async function elegirProductoInicial() {
+  const deHash = idProductoDeHash();
+  const id = prod.lista.some((p) => p.id === deHash) ? deHash : (prod.lista[0] || {}).id;
+  if (id) {
+    history.replaceState(null, '', `#productos/${id}`);
+    await seleccionarProducto(id);
+  } else {
+    history.replaceState(null, '', '#productos');
+    prod.productoId = null;
+    prod.detalle = null;
+    dibujarListaProductos();
+    dibujarProducto();
+  }
+}
+
+async function refrescarProductos() {
+  const tareas = [cargarProductos()];
+  if (prod.productoId) tareas.push(cargarDetalleProducto(prod.productoId));
+  await Promise.all(tareas);
+}
+
+/* ---------- Anotar venta o tanda ---------- */
+
+function ponerMovCuandoAhora() {
+  porId('mov-cuando').value = aValorLocal(new Date());
+  prod.cuandoTocado = false;
+  porId('mov-ahora').hidden = true;
+}
+
+// Igual que el de tandas: si es el mismo producto, no se borra lo escrito.
+function prepararFormularioMov(d) {
+  const select = porId('mov-opcion');
+  const previo = select.value;
+  vaciar(select);
+  d.opciones.forEach((o) => select.append(crear('option', { value: String(o.id), texto: o.nombre })));
+  if (d.id === prod.formProductoId) {
+    if (d.opciones.some((o) => String(o.id) === previo)) select.value = previo;
+  } else {
+    prod.formProductoId = d.id;
+    porId('mov-cantidad').value = '';
+    prod.intento = null;
+    prod.aviso = null;
+    ponerMovCuandoAhora();
+    mostrarError('mov-error', '');
+    dibujarAvisoMov();
+  }
+}
+
+function nombreDeOpcion(id) {
+  const o = prod.detalle && prod.detalle.opciones.find((x) => x.id === id);
+  return o ? o.nombre : 'esa opción';
+}
+
+function dibujarAvisoMov() {
+  const cont = porId('aviso-mov');
+  vaciar(cont);
+  const p = prod.aviso;
+  if (!p) return;
+  const opcion = nombreDeOpcion(prod.intento ? prod.intento.opcionId : Number(porId('mov-opcion').value));
+  const distancia = prod.intento && prod.intento.cuando
+    ? `a ${hacerTexto(p.hace_minutos)} de la hora que pusiste`
+    : `hace ${hacerTexto(p.hace_minutos)}`;
+  cont.append(crear('div', null,
+    crear('span', null,
+      crear('b', { texto: '¿Es otra tanda?' }),
+      ` Ya anotaste una tanda de ${num(p.cantidad)} de ${opcion}: ${cuandoTexto(p.cuando)} (${distancia}).`),
+    crear('div', { clase: 'botones' },
+      crear('button', { type: 'button', clase: 'boton-aviso', texto: 'Sí, guardar', enclick: () => guardarMovimiento(true) }),
+      crear('button', { type: 'button', clase: 'boton-aviso-claro', texto: 'No, ya estaba', enclick: descartarAvisoMov }))));
+}
+
+function descartarAvisoMov() {
+  prod.aviso = null;
+  prod.intento = null;
+  dibujarAvisoMov();
+  anunciar('Listo, no se guardó otra tanda');
+  porId('mov-cantidad').focus();
+}
+
+function formularioMovCambio() {
+  if (prod.aviso) {
+    prod.aviso = null;
+    dibujarAvisoMov();
+  }
+  mostrarError('mov-error', '');
+}
+
+async function guardarMovimiento(forzar) {
+  if (prod.enviando || !prod.detalle) return;
+  mostrarError('mov-error', '');
+
+  const tipo = porId('mov-tipo').value;
+  const opcionId = Number(porId('mov-opcion').value);
+  const texto = porId('mov-cantidad').value.trim();
+  const cantidad = Number(texto);
+  if (!opcionId) { mostrarError('mov-error', 'Elige la opción.'); return; }
+  if (!texto || !Number.isInteger(cantidad) || cantidad < 1 || cantidad > 100000) {
+    mostrarError('mov-error', 'Escribe cuántas (un número de 1 a 100.000).');
+    porId('mov-cantidad').focus();
+    return;
+  }
+  const valorCuando = porId('mov-cuando').value;
+  if (prod.cuandoTocado && !valorCuando) {
+    mostrarError('mov-error', 'Escribe la fecha y la hora, o toca «Ahora».');
+    return;
+  }
+  const cuando = prod.cuandoTocado ? deValorLocalAIso(valorCuando) : null;
+
+  // Mismos datos, mismo id: un reintento no cuenta dos veces.
+  const i = prod.intento;
+  if (!i || i.opcionId !== opcionId || i.tipo !== tipo || i.cantidad !== cantidad || i.cuando !== cuando) {
+    prod.intento = { id: idNuevo(), opcionId, tipo, cantidad, cuando };
+  }
+  const cuerpo = { id_cliente: prod.intento.id, opcion_id: opcionId, tipo, cantidad, forzar: !!forzar };
+  if (cuando) cuerpo.cuando = cuando;
+
+  prod.enviando = true;
+  porId('mov-guardar').disabled = true;
+  try {
+    await pedir('POST', '/api/movimientos', cuerpo);
+    prod.aviso = null;
+    prod.intento = null;
+    dibujarAvisoMov();
+    ponerMovCuandoAhora();
+    anunciar(`${tipo === 'venta' ? 'Venta' : 'Tanda'} guardada: ${num(cantidad)} de ${nombreDeOpcion(opcionId)}`);
+    // Ya quedó guardado: si falla solo el refresco, no hay que hacer pensar lo contrario.
+    try {
+      await refrescarProductos();
+    } catch (e) {
+      if (!(e instanceof ErrorApi && e.estado === 401)) {
+        mostrarError('mov-error', 'Guardado, pero no se pudo actualizar la lista. Recarga la página en un momento.');
+      }
+    }
+    porId('mov-cantidad').focus();
+  } catch (e) {
+    if (e instanceof ErrorApi && e.estado === 409 && e.cuerpo && e.cuerpo.parecida) {
+      prod.aviso = e.cuerpo.parecida;
+      dibujarAvisoMov();
+    } else {
+      manejarError(e, 'mov-error');
+    }
+  } finally {
+    prod.enviando = false;
+    porId('mov-guardar').disabled = false;
+  }
+}
+
+/* ---------- Movimientos: editar en línea y borrar ---------- */
+
+function etiquetaMov(m) {
+  return `${m.tipo === 'venta' ? 'venta' : 'tanda'} de ${num(m.cantidad)} de ${m.opcion}`;
+}
+
+function filaMovimiento(m) {
+  const venta = m.tipo === 'venta';
+  return crear('tr', { 'data-mov': m.id },
+    crear('td', { clase: 'cuando', texto: cuandoTexto(m.cuando) }),
+    crear('td', { texto: m.opcion }),
+    crear('td', { texto: venta ? 'Venta' : 'Tanda' }),
+    crear('td', { clase: 'cantidad' + (venta ? '' : ' suma'), texto: (venta ? '−' : '+') + num(m.cantidad) }),
+    crear('td', { clase: 'botones' },
+      crear('button', {
+        type: 'button', clase: 'boton-suave', texto: 'Editar',
+        'aria-label': `Editar ${etiquetaMov(m)}`, enclick: () => editarMovimiento(m),
+      }),
+      crear('button', {
+        type: 'button', clase: 'boton-peligro', texto: 'Borrar',
+        'aria-label': `Borrar ${etiquetaMov(m)}`, enclick: () => borrarMovimiento(m),
+      })));
+}
+
+function dibujarMovimientos() {
+  const cuerpo = porId('movimientos');
+  vaciar(cuerpo);
+  const movs = prod.detalle ? prod.detalle.movimientos : [];
+  movs.forEach((m) => cuerpo.append(filaMovimiento(m)));
+  porId('movimientos-vacio').hidden = movs.length > 0;
+  porId('movimientos').closest('.tabla-desliza').hidden = movs.length === 0;
+}
+
+function enfocarEditarMov(id) {
+  const boton = document.querySelector(`tr[data-mov="${id}"] .boton-suave`);
+  if (boton) boton.focus();
+}
+
+function editarMovimiento(m) {
+  const fila = document.querySelector(`tr[data-mov="${m.id}"]`);
+  if (!fila) return;
+  const valorInicial = aValorLocal(new Date(m.cuando));
+  const cant = crear('input', {
+    clase: 'campo', type: 'number', inputmode: 'numeric', min: 1, max: 100000, step: 1, value: String(m.cantidad),
+  });
+  const cuando = crear('input', { clase: 'campo', type: 'datetime-local', value: valorInicial });
+  const error = crear('div', { clase: 'mensaje-error', role: 'alert', hidden: true });
+
+  function cancelar() {
+    fila.replaceWith(filaMovimiento(m));
+    enfocarEditarMov(m.id);
+  }
+
+  async function guardar() {
+    const n = Number(cant.value);
+    if (!cant.value.trim() || !Number.isInteger(n) || n < 1 || n > 100000) {
+      error.textContent = 'La cantidad debe ser un número de 1 a 100.000.';
+      error.hidden = false;
+      cant.focus();
+      return;
+    }
+    if (!cuando.value) {
+      error.textContent = 'Escribe la fecha y la hora.';
+      error.hidden = false;
+      return;
+    }
+    const cambios = {};
+    if (n !== m.cantidad) cambios.cantidad = n;
+    // Solo si la cambió: así no se pierden los segundos guardados.
+    if (cuando.value !== valorInicial) cambios.cuando = deValorLocalAIso(cuando.value);
+    if (!Object.keys(cambios).length) { cancelar(); return; }
+    guardarBoton.disabled = true;
+    try {
+      await pedir('PATCH', `/api/movimientos/${m.id}`, cambios);
+      await refrescarProductos();
+      anunciar('Movimiento actualizado');
+      enfocarEditarMov(m.id);
+    } catch (e) {
+      guardarBoton.disabled = false;
+      if (e instanceof ErrorApi && e.estado === 401) return;
+      error.textContent = e instanceof ErrorApi ? e.mensaje : 'Algo salió mal. Intenta de nuevo.';
+      error.hidden = false;
+    }
+  }
+
+  const guardarBoton = crear('button', { type: 'submit', clase: 'boton', texto: 'Guardar' });
+  const formulario = crear('form', { clase: 'tanda-edicion', novalidate: true },
+    crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: `Cuántas (${m.opcion})` }), cant),
+    crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Fecha y hora' }), cuando),
+    crear('div', { clase: 'botones' },
+      guardarBoton,
+      crear('button', { type: 'button', clase: 'boton-secundario', texto: 'Cancelar', enclick: cancelar })));
+  formulario.addEventListener('submit', (ev) => { ev.preventDefault(); guardar(); });
+
+  vaciar(fila);
+  fila.append(crear('td', { colspan: 5 }, formulario, error));
+  cant.focus();
+}
+
+async function borrarMovimiento(m) {
+  if (!confirm(`¿Borrar la ${etiquetaMov(m)} (${cuandoTexto(m.cuando)})?`)) return;
+  mostrarError('error-productos', '');
+  try {
+    await pedir('DELETE', `/api/movimientos/${m.id}`);
+    anunciar('Movimiento borrado');
+    try {
+      await refrescarProductos();
+    } catch (e) {
+      if (!(e instanceof ErrorApi && e.estado === 401)) {
+        mostrarError('error-productos', 'Borrado, pero no se pudo actualizar la lista. Recarga la página en un momento.');
+      }
+    }
+  } catch (e) {
+    if (e instanceof ErrorApi && e.estado === 404) { try { await refrescarProductos(); } catch (_) { /* nada */ } }
+    manejarError(e, 'error-productos');
+  }
+}
+
+/* ---------- Foto del producto ---------- */
+
+async function subirFotoProducto(archivo) {
+  const d = prod.detalle;
+  if (!d) return;
+  mostrarError('error-productos', '');
+  if (archivo.size > 3 * 1024 * 1024) {
+    mostrarError('error-productos', 'La foto pesa más de 3 MB. Elige una más liviana.');
+    return;
+  }
+  const formulario = new FormData();
+  formulario.append('foto', archivo);
+  try {
+    anunciar('Subiendo foto…');
+    await pedir('PUT', `/api/productos/${d.id}/foto`, formulario);
+    await refrescarProductos();
+    anunciar(`Foto de ${d.nombre} guardada`);
+  } catch (e) {
+    manejarError(e, 'error-productos');
+  }
+}
+
+/* ---------- Diálogo: nuevo producto y editar producto ---------- */
+
+// Una fila por opción. `id` es null mientras la opción no existe en el servidor.
+function crearFilaOpcion(opcion, conMovimientos) {
+  const fila = {
+    id: opcion ? opcion.id : null,
+    nombreOriginal: opcion ? opcion.nombre : null,
+    quitar: false,
+    // Para la tanda inicial de una opción agregada al editar: si Guardar se
+    // repite tras un fallo, el mismo id evita contarla dos veces.
+    idHechos: idNuevo(),
+    hechosGuardados: false,
+  };
+  fila.nombre = crear('input', { clase: 'campo', type: 'text', maxlength: 80, required: true, value: opcion ? opcion.nombre : '' });
+  let segunda;
+  if (opcion) {
+    // Lo que ya existe se corrige anotando movimientos, no aquí.
+    fila.hechos = null;
+    segunda = crear('span', { clase: 'fila-opcion-saldo', texto: saldoTexto(opcion.saldo) });
+  } else {
+    fila.hechos = crear('input', {
+      clase: 'campo', type: 'number', inputmode: 'numeric', min: 0, max: 100000, step: 1, placeholder: '0',
+    });
+    segunda = crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: '¿Ya tienes hechos?' }), fila.hechos);
+  }
+  fila.boton = crear('button', {
+    type: 'button', clase: 'boton-peligro', texto: 'Quitar',
+    disabled: conMovimientos,
+    title: conMovimientos ? 'Esta opción ya tiene movimientos: bórralos primero' : false,
+    enclick: () => quitarFilaOpcion(fila),
+  });
+  fila.li = crear('li', { clase: 'fila-modelo' },
+    crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Opción' }), fila.nombre),
+    segunda, fila.boton);
+  const etiquetar = () => fila.boton.setAttribute('aria-label', `Quitar opción ${fila.nombre.value || 'sin nombre'}`);
+  etiquetar();
+  fila.nombre.addEventListener('input', etiquetar);
+  return fila;
+}
+
+function vivasOpcion() { return prod.dialogo.filas.filter((f) => !f.quitar); }
+
+function quitarFilaOpcion(fila) {
+  const d = prod.dialogo;
+  if (vivasOpcion().length <= 1) {
+    mostrarError('producto-error', 'El producto necesita al menos una opción.');
+    return;
+  }
+  mostrarError('producto-error', '');
+  const posicion = vivasOpcion().indexOf(fila);
+  if (fila.id === null) {
+    d.filas.splice(d.filas.indexOf(fila), 1);
+    fila.li.remove();
+  } else {
+    fila.quitar = true;
+    fila.li.hidden = true;
+    fila.nombre.disabled = true;
+  }
+  const visibles = vivasOpcion();
+  (visibles[Math.max(0, posicion - 1)] || visibles[0]).nombre.focus();
+  porId('agregar-opcion').hidden = visibles.length >= MAX_OPCIONES;
+}
+
+function agregarFilaOpcion(opcion, conMovimientos) {
+  if (vivasOpcion().length >= MAX_OPCIONES) return null;
+  const fila = crearFilaOpcion(opcion, conMovimientos);
+  prod.dialogo.filas.push(fila);
+  porId('filas-opciones').append(fila.li);
+  porId('agregar-opcion').hidden = vivasOpcion().length >= MAX_OPCIONES;
+  return fila;
+}
+
+function abrirDialogoProducto(modo) {
+  const d = prod.detalle;
+  prod.dialogo = { modo, filas: [] };
+  vaciar(porId('filas-opciones'));
+  mostrarError('producto-error', '');
+  porId('producto-guardar').disabled = false;
+  porId('agregar-opcion').hidden = false;
+  if (modo === 'editar' && d) {
+    porId('dialogo-producto-titulo').textContent = 'Editar producto';
+    porId('producto-nombre').value = d.nombre;
+    // Con saldo o con movimientos recientes seguro tiene movimientos; si tiene
+    // solo antiguos, el servidor contesta 409 y se avisa.
+    d.opciones.forEach((o) => agregarFilaOpcion(o, o.saldo !== 0 || d.movimientos.some((m) => m.opcion_id === o.id)));
+  } else {
+    porId('dialogo-producto-titulo').textContent = 'Nuevo producto';
+    porId('producto-nombre').value = '';
+    agregarFilaOpcion(null, false);
+  }
+  porId('dialogo-producto').showModal();
+  porId('producto-nombre').focus();
+}
+
+async function guardarProducto(evento) {
+  evento.preventDefault();
+  const d = prod.dialogo;
+  const boton = porId('producto-guardar');
+  mostrarError('producto-error', '');
+
+  const nombre = porId('producto-nombre').value.trim();
+  if (!nombre) { mostrarError('producto-error', 'Escribe el nombre del producto.'); porId('producto-nombre').focus(); return; }
+  const vivas = vivasOpcion();
+  if (!vivas.length) { mostrarError('producto-error', 'El producto necesita al menos una opción.'); return; }
+  const opciones = vivas.map((f) => ({
+    fila: f, nombre: f.nombre.value.trim(),
+    hechos: f.hechos && f.hechos.value.trim() ? Number(f.hechos.value) : 0,
+  }));
+  for (const o of opciones) {
+    if (!o.nombre) { mostrarError('producto-error', 'Todas las opciones necesitan nombre.'); o.fila.nombre.focus(); return; }
+    if (!Number.isInteger(o.hechos) || o.hechos < 0 || o.hechos > 100000) {
+      mostrarError('producto-error', 'Los ya hechos van de 0 a 100.000.');
+      o.fila.hechos.focus();
+      return;
+    }
+  }
+
+  boton.disabled = true;
+  try {
+    if (d.modo === 'nuevo') {
+      const nuevo = await pedir('POST', '/api/productos', {
+        nombre, opciones: opciones.map((o) => ({ nombre: o.nombre, hechos: o.hechos })),
+      });
+      porId('dialogo-producto').close();
+      anunciar('Producto creado');
+      try {
+        await cargarProductos();
+        location.hash = `#productos/${nuevo.id}`;
+      } catch (e) {
+        manejarError(e, 'error-productos');
+      }
+      return;
+    }
+    await guardarCambiosProducto(nombre, opciones);
+  } catch (e) {
+    manejarError(e, 'producto-error');
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+// Como en pedidos: cada paso hecho queda anotado en su fila, así un Guardar
+// repetido tras un fallo no rehace lo que ya quedó.
+async function guardarCambiosProducto(nombre, opciones) {
+  const d = prod.dialogo;
+  const id = prod.detalle.id;
+  try {
+    if (nombre !== prod.detalle.nombre) await pedir('PATCH', `/api/productos/${id}`, { nombre });
+
+    for (const fila of d.filas.filter((f) => f.quitar).slice()) {
+      try {
+        await pedir('DELETE', `/api/opciones/${fila.id}`);
+      } catch (e) {
+        // No se pudo quitar (p. ej. tiene movimientos antiguos): vuelve a verse.
+        fila.quitar = false;
+        fila.li.hidden = false;
+        fila.nombre.disabled = false;
+        throw e;
+      }
+      d.filas.splice(d.filas.indexOf(fila), 1);
+      fila.li.remove();
+    }
+    for (const o of opciones) {
+      const fila = o.fila;
+      if (fila.id === null) {
+        const creada = await pedir('POST', `/api/productos/${id}/opciones`, { nombre: o.nombre });
+        fila.id = creada.id;
+        fila.nombreOriginal = creada.nombre;
+      } else if (o.nombre !== fila.nombreOriginal) {
+        await pedir('PATCH', `/api/opciones/${fila.id}`, { nombre: o.nombre });
+        fila.nombreOriginal = o.nombre;
+      }
+      if (o.hechos > 0 && !fila.hechosGuardados) {
+        // forzar: lo que ya había no es una tanda repetida.
+        await pedir('POST', '/api/movimientos', {
+          id_cliente: fila.idHechos, opcion_id: fila.id, tipo: 'tanda', cantidad: o.hechos, forzar: true,
+        });
+        fila.hechosGuardados = true;
+      }
+    }
+  } catch (e) {
+    try { await refrescarProductos(); } catch (_) { /* el error original es el que importa */ }
+    throw e;
+  }
+  porId('dialogo-producto').close();
+  anunciar('Producto actualizado');
+  try {
+    await refrescarProductos();
+  } catch (e) {
+    manejarError(e, 'error-productos');
+  }
+}
+
+function conectarEventosProductos() {
+  porId('boton-nuevo-producto').addEventListener('click', () => abrirDialogoProducto('nuevo'));
+  porId('boton-editar-producto').addEventListener('click', () => abrirDialogoProducto('editar'));
+  porId('form-producto').addEventListener('submit', guardarProducto);
+  porId('producto-cancelar').addEventListener('click', () => porId('dialogo-producto').close());
+  porId('agregar-opcion').addEventListener('click', () => {
+    const fila = agregarFilaOpcion(null, false);
+    if (fila) fila.nombre.focus();
+  });
+
+  const archivo = porId('producto-foto-archivo');
+  porId('boton-foto-producto').addEventListener('click', () => archivo.click());
+  archivo.addEventListener('change', () => { if (archivo.files[0]) subirFotoProducto(archivo.files[0]); archivo.value = ''; });
+
+  porId('form-mov').addEventListener('submit', (ev) => { ev.preventDefault(); guardarMovimiento(false); });
+  porId('mov-tipo').addEventListener('change', formularioMovCambio);
+  porId('mov-opcion').addEventListener('change', formularioMovCambio);
+  porId('mov-cantidad').addEventListener('input', formularioMovCambio);
+  porId('mov-cuando').addEventListener('input', () => {
+    prod.cuandoTocado = true;
+    porId('mov-ahora').hidden = false;
+    formularioMovCambio();
+  });
+  porId('mov-ahora').addEventListener('click', () => { ponerMovCuandoAhora(); formularioMovCambio(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !prod.cuandoTocado && prod.detalle) ponerMovCuandoAhora();
+  });
+}
+
+/* =========================================================================
+   12. Arranque
+   ========================================================================= */
+
+// La pestaña sale del hash (#productos...), así al recargar se vuelve a la misma.
+function seccionDeHash() {
+  return location.hash.startsWith('#productos') ? 'productos' : 'pedidos';
+}
+
+async function iniciarPanel() {
+  const seccion = seccionDeHash();
+  estado.seccion = seccion;
+  porId('pantalla-panel').hidden = seccion !== 'pedidos';
+  porId('pantalla-productos').hidden = seccion !== 'productos';
+  porId('pestana-pedidos').setAttribute('aria-current', seccion === 'pedidos' ? 'page' : 'false');
+  porId('pestana-productos').setAttribute('aria-current', seccion === 'productos' ? 'page' : 'false');
+  const zonaError = seccion === 'productos' ? 'error-productos' : 'error-general';
+  mostrarError(zonaError, '');
+  try {
+    if (seccion === 'productos') {
+      await cargarProductos();
+      await elegirProductoInicial();
+    } else {
+      await cargarPedidos();
+      await elegirPedidoInicial();
+    }
+  } catch (e) {
+    manejarError(e, zonaError);
   }
 }
 
@@ -1152,9 +1830,19 @@ function conectarEventos() {
     if (fila) fila.nombre.focus();
   });
 
+  conectarEventosProductos();
+
   window.addEventListener('hashchange', () => {
+    if (porId('zona-sesion').hidden) return;
+    // Cambio de pestaña: se recarga esa sección (puede haber cambios hechos desde el iPhone).
+    if (seccionDeHash() !== estado.seccion) { iniciarPanel(); return; }
+    if (estado.seccion === 'productos') {
+      const id = idProductoDeHash();
+      if (id && id !== prod.productoId) seleccionarProducto(id, { desplazar: true });
+      return;
+    }
     const id = idDeHash();
-    if (id && id !== estado.pedidoId && !porId('pantalla-panel').hidden) seleccionar(id, { desplazar: true });
+    if (id && id !== estado.pedidoId) seleccionar(id, { desplazar: true });
   });
 }
 

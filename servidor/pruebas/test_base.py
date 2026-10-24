@@ -15,6 +15,7 @@ def test_crear_tablas_dos_veces_no_falla(motores):
     base.crear_tablas(motor_sistema)
     assert set(inspect(motor_sistema).get_table_names()) == {
         "sesiones", "intentos", "usuarios", "pedidos", "modelos", "tandas", "perfiles", "filamentos",
+        "productos", "opciones", "movimientos",
     }
 
 

@@ -17,6 +17,10 @@
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4zM3 7v10l9 4 9-4V7M12 11v10"/></svg>
     </span>
     <span class="marca-nombre">3D Organizer</span>
+    <nav class="secciones" id="secciones" aria-label="Secciones" hidden>
+      <a href="#pedidos" id="pestana-pedidos">Pedidos</a>
+      <a href="#productos" id="pestana-productos">Productos</a>
+    </nav>
   </div>
   <div class="sesion" id="zona-sesion" hidden>
     <span class="sesion-correo" id="correo-sesion"></span>
@@ -112,6 +116,105 @@
     </section>
   </main>
 </div>
+
+<!-- Pantalla: productos (stock por opción) -->
+<div id="pantalla-productos" class="panel" hidden>
+  <nav class="lateral" aria-label="Productos">
+    <button type="button" class="boton" id="boton-nuevo-producto">+ Nuevo producto</button>
+    <div class="lateral-grupo" id="zona-por-imprimir" hidden>
+      <span class="etiqueta" style="padding: 8px 4px 0">Por imprimir</span>
+      <ul class="caja por-imprimir" id="lista-por-imprimir"></ul>
+      <p class="vacio" id="nada-por-imprimir" hidden>Nada por imprimir.</p>
+    </div>
+    <span class="etiqueta" style="padding: 8px 4px 0">Productos</span>
+    <ul class="lista" id="lista-productos"></ul>
+    <p class="vacio" id="sin-productos" hidden>Todavía no hay productos. Crea el primero con «+ Nuevo producto».</p>
+  </nav>
+
+  <main class="principal" id="principal-productos" tabindex="-1">
+    <div class="mensaje-error" id="error-productos" role="alert" hidden></div>
+
+    <div id="producto-detalle" hidden>
+      <div class="cabecera">
+        <div class="producto-cabecera">
+          <div class="modelo-foto" id="producto-foto"></div>
+          <div>
+            <h1 id="producto-titulo" tabindex="-1"></h1>
+            <span class="sub" id="producto-sub"></span>
+          </div>
+        </div>
+        <div class="acciones">
+          <button type="button" class="boton-secundario" id="boton-foto-producto">Subir foto</button>
+          <input type="file" id="producto-foto-archivo" accept="image/jpeg,image/png" hidden aria-label="Elegir foto del producto">
+          <button type="button" class="boton-secundario" id="boton-editar-producto">Editar producto</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="caja" id="caja-opciones" aria-label="Opciones" hidden>
+      <div class="tarjetas" id="tarjetas-opciones"></div>
+    </section>
+
+    <section class="caja" id="caja-anotar" aria-labelledby="titulo-anotar" hidden>
+      <h2 id="titulo-anotar">Anotar</h2>
+      <form class="form-tanda" id="form-mov" novalidate>
+        <label class="eti c-tipo"><span class="etiqueta">Qué</span>
+          <select class="campo" id="mov-tipo">
+            <option value="venta">Venta (resta)</option>
+            <option value="tanda">Tanda (suma)</option>
+          </select>
+        </label>
+        <label class="eti c-modelo"><span class="etiqueta">Opción</span>
+          <select class="campo" id="mov-opcion"></select>
+        </label>
+        <label class="eti c-cantidad"><span class="etiqueta">Cuántas</span>
+          <input class="campo" id="mov-cantidad" type="number" inputmode="numeric" min="1" max="100000" step="1">
+        </label>
+        <div class="eti c-cuando"><label class="etiqueta" for="mov-cuando">Fecha y hora</label>
+          <div class="cuando-fila">
+            <input class="campo" id="mov-cuando" type="datetime-local">
+            <button type="button" class="boton-suave" id="mov-ahora" hidden>Ahora</button>
+          </div>
+        </div>
+        <div class="c-guardar"><button type="submit" class="boton" id="mov-guardar">Guardar</button></div>
+      </form>
+      <div class="mensaje-error" id="mov-error" role="alert" hidden></div>
+      <div class="aviso-tanda" id="aviso-mov" aria-live="assertive" aria-atomic="true"></div>
+    </section>
+
+    <section class="caja" id="caja-movimientos" aria-labelledby="titulo-movimientos" hidden>
+      <h2 id="titulo-movimientos">Movimientos</h2>
+      <p class="vacio" id="movimientos-vacio" hidden>Todavía no hay movimientos.</p>
+      <div class="tabla-desliza">
+        <table class="tabla-movs">
+          <thead><tr><th scope="col">Fecha y hora</th><th scope="col">Opción</th><th scope="col">Qué</th>
+            <th scope="col" class="cantidad">Cantidad</th><th scope="col"><span class="solo-lector">Acciones</span></th></tr></thead>
+          <tbody id="movimientos"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Diálogo: nuevo producto / editar producto -->
+<dialog id="dialogo-producto" aria-labelledby="dialogo-producto-titulo">
+  <form id="form-producto">
+    <h2 id="dialogo-producto-titulo">Nuevo producto</h2>
+    <label class="eti"><span class="etiqueta">Nombre del producto</span>
+      <input class="campo" id="producto-nombre" type="text" maxlength="120" required>
+    </label>
+    <fieldset>
+      <legend class="etiqueta">Opciones (colores, tamaños…)</legend>
+      <ol class="filas-modelos" id="filas-opciones"></ol>
+      <button type="button" class="boton-enlace" id="agregar-opcion">+ Agregar opción</button>
+    </fieldset>
+    <div class="mensaje-error" id="producto-error" role="alert" hidden></div>
+    <div class="dialogo-botones">
+      <button type="button" class="boton-secundario" id="producto-cancelar">Cancelar</button>
+      <button type="submit" class="boton" id="producto-guardar">Guardar</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Diálogo: nuevo pedido / editar pedido -->
 <dialog id="dialogo-pedido" aria-labelledby="dialogo-titulo">
