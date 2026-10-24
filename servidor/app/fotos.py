@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from . import base, pedidos
 from .acceso import usuario_actual
@@ -98,10 +98,11 @@ def _guardar(contenido: bytes, nombre: str):
 
 
 @router.put("/api/modelos/{modelo_id}/foto")
-def subir_foto(modelo_id: pedidos.IdRuta, foto: UploadFile, request: Request):
+def subir_foto(modelo_id: pedidos.IdRuta, foto: UploadFile, request: Request,
+               correo: pedidos.Correo):
     motor = request.app.state.motor_sistema
     with motor.connect() as con:
-        pedidos._modelo_o_404(con, modelo_id)
+        pedidos._modelo_o_404(con, modelo_id, correo)
 
     contenido, ext = _leer_foto(foto.file)
     nombre = f"{hashlib.sha256(contenido).hexdigest()}.{ext}"
@@ -111,14 +112,23 @@ def subir_foto(modelo_id: pedidos.IdRuta, foto: UploadFile, request: Request):
         # Si el modelo se borro mientras se subia, el update no toca nada y el
         # 404 sale al leerlo.
         con.execute(update(base.modelos).where(base.modelos.c.id == modelo_id).values(foto=nombre))
-        return pedidos._modelo_con_hechas(con, modelo_id)
+        return pedidos._modelo_con_hechas(con, modelo_id, correo)
 
 
 @router.get("/api/fotos/{nombre}")
-def ver_foto(nombre: str):
+def ver_foto(nombre: str, request: Request, correo: pedidos.Correo):
     # Cualquier cosa que no sea un nombre de los que genera subir_foto es 404,
     # sin tocar el disco: asi no hay forma de salirse de la carpeta.
     if not NOMBRE_VALIDO.fullmatch(nombre):
+        raise HTTPException(status_code=404, detail="No existe esa foto")
+    # Solo se sirve si algun modelo de quien la pide la usa: la foto de otra
+    # cuenta da 404 aunque el archivo exista.
+    with request.app.state.motor_sistema.connect() as con:
+        suya = con.execute(
+            select(base.modelos.c.id)
+            .select_from(base.modelos.join(base.pedidos, base.pedidos.c.id == base.modelos.c.pedido_id))
+            .where(base.modelos.c.foto == nombre, base.pedidos.c.dueno == correo).limit(1)).first()
+    if suya is None:
         raise HTTPException(status_code=404, detail="No existe esa foto")
     ruta = carpeta_fotos() / nombre
     if not ruta.is_file():

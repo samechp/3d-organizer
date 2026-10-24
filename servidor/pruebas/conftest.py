@@ -109,3 +109,24 @@ def cliente_con_sesion(cliente, motores):
     cliente.cookies.clear()
     cliente.headers["Authorization"] = f"Bearer {respuesta.json()['token']}"
     return cliente
+
+
+CORREO_AMIGO = "amigo@ejemplo.com"
+CLAVE_AMIGO = "clave-del-amigo-123"
+
+
+@pytest.fixture
+def cabeceras_amigo(cliente_con_sesion):
+    """Cabeceras de un ayudante (amigo@ejemplo.com) que Juan crea por la API.
+
+    El cliente sigue entrando como Juan; una peticion va como el amigo pasando
+    headers=cabeceras_amigo, que reemplaza el Authorization de Juan.
+    """
+    c = cliente_con_sesion
+    assert c.post("/api/usuarios", json={"correo": CORREO_AMIGO, "clave": CLAVE_AMIGO}).status_code == 201
+    token_juan = c.headers.pop("Authorization")
+    r = c.post("/api/acceso", json={"correo": CORREO_AMIGO, "clave": CLAVE_AMIGO})
+    assert r.status_code == 200
+    c.cookies.clear()
+    c.headers["Authorization"] = token_juan
+    return {"Authorization": f"Bearer {r.json()['token']}"}

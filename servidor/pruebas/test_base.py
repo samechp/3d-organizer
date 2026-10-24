@@ -21,7 +21,7 @@ def test_crear_tablas_dos_veces_no_falla(motores):
 def test_estado_del_pedido_nace_abierto(motores):
     motor_sistema, _ = motores
     with motor_sistema.begin() as con:
-        con.execute(base.pedidos.insert().values(nombre="Lote de prueba"))
+        con.execute(base.pedidos.insert().values(nombre="Lote de prueba", dueno="juan@ejemplo.com"))
         fila = con.execute(base.pedidos.select()).one()
     assert fila.estado == "abierto"
     assert fila.creado is not None
@@ -34,7 +34,7 @@ def test_id_cliente_de_la_tanda_es_unico(motores):
 
     motor_sistema, _ = motores
     with motor_sistema.begin() as con:
-        pedido = con.execute(base.pedidos.insert().values(nombre="P")).inserted_primary_key[0]
+        pedido = con.execute(base.pedidos.insert().values(nombre="P", dueno="juan@ejemplo.com")).inserted_primary_key[0]
         modelo = con.execute(
             base.modelos.insert().values(pedido_id=pedido, nombre="M", meta=10, orden=0)
         ).inserted_primary_key[0]

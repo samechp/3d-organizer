@@ -243,9 +243,9 @@ def test_id_cliente_que_choca_en_carrera_devuelve_la_existente(cliente_con_sesio
     original = pedidos._buscar_por_id_cliente
     llamadas = []
 
-    def ciega_la_primera_vez(con, id_cliente):
+    def ciega_la_primera_vez(con, id_cliente, correo):
         llamadas.append(1)
-        return None if len(llamadas) == 1 else original(con, id_cliente)
+        return None if len(llamadas) == 1 else original(con, id_cliente, correo)
 
     monkeypatch.setattr(pedidos, "_buscar_por_id_cliente", ciega_la_primera_vez)
     # forzar: la tanda ya existente se parece a esta y sin el no se llegaria al INSERT.

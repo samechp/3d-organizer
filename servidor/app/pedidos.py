@@ -30,6 +30,10 @@ from .acceso import usuario_actual
 # en una ruta nueva.
 router = APIRouter(dependencies=[Depends(usuario_actual)])
 
+# Correo de quien llama, para filtrar por dueno. FastAPI guarda el resultado de
+# la dependencia por peticion: la sesion no se valida dos veces.
+Correo = Annotated[str, Depends(usuario_actual)]
+
 BOGOTA = ZoneInfo("America/Bogota")
 MAX_MODELOS = 50
 ULTIMAS = 5
@@ -193,13 +197,19 @@ def _tanda_json(fila) -> dict:
     }
 
 
-def _consulta_tandas():
+def _tandas_con_pedido():
+    # La tanda no guarda dueno: se llega a el por su modelo y el pedido de este.
+    return (base.tandas.join(base.modelos, base.modelos.c.id == base.tandas.c.modelo_id)
+            .join(base.pedidos, base.pedidos.c.id == base.modelos.c.pedido_id))
+
+
+def _consulta_tandas(correo: str):
     # El nombre del modelo va en cada tanda para que las listas no tengan que
     # cruzar datos ni hacer una consulta por tanda.
     return select(
         base.tandas.c.id, base.tandas.c.modelo_id, base.modelos.c.nombre.label("modelo"),
         base.tandas.c.cantidad, base.tandas.c.cuando, base.tandas.c.id_cliente,
-    ).select_from(base.tandas.join(base.modelos, base.modelos.c.id == base.tandas.c.modelo_id))
+    ).select_from(_tandas_con_pedido()).where(base.pedidos.c.dueno == correo)
 
 
 def _modelo_json(fila, hechas: int) -> dict:
@@ -255,13 +265,21 @@ def _resumen_json(pedido, modelos: list[dict]) -> dict:
     }
 
 
-def _detalle(con, pedido_id: int) -> dict:
-    pedido = con.execute(select(base.pedidos).where(base.pedidos.c.id == pedido_id)).first()
-    if pedido is None:
+def _pedido_o_404(con, pedido_id: int, correo: str):
+    # El pedido de otra cuenta responde igual que uno que no existe: ni siquiera
+    # se deja saber que ese id esta ocupado.
+    fila = con.execute(select(base.pedidos).where(
+        base.pedidos.c.id == pedido_id, base.pedidos.c.dueno == correo)).first()
+    if fila is None:
         raise HTTPException(status_code=404, detail="No existe ese pedido")
+    return fila
+
+
+def _detalle(con, pedido_id: int, correo: str) -> dict:
+    pedido = _pedido_o_404(con, pedido_id, correo)
     modelos = _modelos_por_pedido(con, [pedido_id])[pedido_id]
     ultimas = con.execute(
-        _consulta_tandas().where(base.modelos.c.pedido_id == pedido_id)
+        _consulta_tandas(correo).where(base.modelos.c.pedido_id == pedido_id)
         # id desc desempata tandas con la misma hora: la anotada despues va primero.
         .order_by(base.tandas.c.cuando.desc(), base.tandas.c.id.desc()).limit(ULTIMAS)
     ).all()
@@ -274,15 +292,18 @@ def _detalle(con, pedido_id: int) -> dict:
     }
 
 
-def _modelo_o_404(con, modelo_id: int):
-    fila = con.execute(select(base.modelos).where(base.modelos.c.id == modelo_id)).first()
+def _modelo_o_404(con, modelo_id: int, correo: str):
+    fila = con.execute(
+        select(base.modelos)
+        .select_from(base.modelos.join(base.pedidos, base.pedidos.c.id == base.modelos.c.pedido_id))
+        .where(base.modelos.c.id == modelo_id, base.pedidos.c.dueno == correo)).first()
     if fila is None:
         raise HTTPException(status_code=404, detail="No existe ese modelo")
     return fila
 
 
-def _modelo_con_hechas(con, modelo_id: int) -> dict:
-    fila = _modelo_o_404(con, modelo_id)
+def _modelo_con_hechas(con, modelo_id: int, correo: str) -> dict:
+    fila = _modelo_o_404(con, modelo_id, correo)
     hechas = con.execute(
         select(func.coalesce(func.sum(base.tandas.c.cantidad), 0))
         .where(base.tandas.c.modelo_id == modelo_id)
@@ -290,15 +311,23 @@ def _modelo_con_hechas(con, modelo_id: int) -> dict:
     return _modelo_json(fila, int(hechas))
 
 
-def _tanda_o_404(con, tanda_id: int):
-    fila = con.execute(_consulta_tandas().where(base.tandas.c.id == tanda_id)).first()
+def _tanda_o_404(con, tanda_id: int, correo: str):
+    fila = con.execute(_consulta_tandas(correo).where(base.tandas.c.id == tanda_id)).first()
     if fila is None:
         raise HTTPException(status_code=404, detail="No existe esa tanda")
     return fila
 
 
-def _buscar_por_id_cliente(con, id_cliente: str):
-    return con.execute(_consulta_tandas().where(base.tandas.c.id_cliente == id_cliente)).first()
+def _buscar_por_id_cliente(con, id_cliente: str, correo: str):
+    # id_cliente es UNIQUE en toda la tabla. Si ya lo uso otra cuenta (un UUID
+    # repetido no pasa por azar) es un conflicto, sin devolver nada de esa tanda.
+    dueno = con.execute(select(base.pedidos.c.dueno).select_from(_tandas_con_pedido())
+                        .where(base.tandas.c.id_cliente == id_cliente)).scalar()
+    if dueno is None:
+        return None
+    if dueno != correo:
+        raise HTTPException(status_code=409, detail="Ese id_cliente ya está en uso")
+    return con.execute(_consulta_tandas(correo).where(base.tandas.c.id_cliente == id_cliente)).first()
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +335,9 @@ def _buscar_por_id_cliente(con, id_cliente: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/pedidos")
-def listar_pedidos(request: Request, estado: Literal["abierto", "terminado"] | None = None):
-    consulta = select(base.pedidos)
+def listar_pedidos(request: Request, correo: Correo,
+                   estado: Literal["abierto", "terminado"] | None = None):
+    consulta = select(base.pedidos).where(base.pedidos.c.dueno == correo)
     if estado:
         consulta = consulta.where(base.pedidos.c.estado == estado)
     with request.app.state.motor_sistema.connect() as con:
@@ -325,33 +355,31 @@ def listar_pedidos(request: Request, estado: Literal["abierto", "terminado"] | N
 
 
 @router.post("/api/pedidos", status_code=201)
-def crear_pedido(datos: PedidoNuevo, request: Request):
+def crear_pedido(datos: PedidoNuevo, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
         pedido_id = con.execute(base.pedidos.insert().values(
-            nombre=datos.nombre, cliente=datos.cliente, entrega=datos.entrega,
+            dueno=correo, nombre=datos.nombre, cliente=datos.cliente, entrega=datos.entrega,
             nota=datos.nota, estado="abierto", creado=ahora_bogota(),
         )).inserted_primary_key[0]
         con.execute(base.modelos.insert(), [
             {"pedido_id": pedido_id, "nombre": m.nombre, "meta": m.meta, "orden": i}
             for i, m in enumerate(datos.modelos)
         ])
-        return _detalle(con, pedido_id)
+        return _detalle(con, pedido_id, correo)
 
 
 @router.get("/api/pedidos/{pedido_id}")
-def ver_pedido(pedido_id: IdRuta, request: Request):
+def ver_pedido(pedido_id: IdRuta, request: Request, correo: Correo):
     with request.app.state.motor_sistema.connect() as con:
-        return _detalle(con, pedido_id)
+        return _detalle(con, pedido_id, correo)
 
 
 @router.patch("/api/pedidos/{pedido_id}")
-def editar_pedido(pedido_id: IdRuta, datos: PedidoCambios, request: Request):
+def editar_pedido(pedido_id: IdRuta, datos: PedidoCambios, request: Request, correo: Correo):
     # exclude_unset: distingue "no lo mandaron" de "mandaron null para borrarlo".
     cambios = datos.model_dump(exclude_unset=True)
     with request.app.state.motor_sistema.begin() as con:
-        actual = con.execute(select(base.pedidos).where(base.pedidos.c.id == pedido_id)).first()
-        if actual is None:
-            raise HTTPException(status_code=404, detail="No existe ese pedido")
+        actual = _pedido_o_404(con, pedido_id, correo)
         if cambios.get("estado") == "terminado":
             # Si ya estaba terminado se conserva la fecha original.
             cambios["terminado_en"] = actual.terminado_en or ahora_bogota()
@@ -359,7 +387,7 @@ def editar_pedido(pedido_id: IdRuta, datos: PedidoCambios, request: Request):
             cambios["terminado_en"] = None
         if cambios:
             con.execute(base.pedidos.update().where(base.pedidos.c.id == pedido_id).values(**cambios))
-        return _detalle(con, pedido_id)
+        return _detalle(con, pedido_id, correo)
 
 
 # ---------------------------------------------------------------------------
@@ -367,10 +395,9 @@ def editar_pedido(pedido_id: IdRuta, datos: PedidoCambios, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/pedidos/{pedido_id}/modelos", status_code=201)
-def agregar_modelo(pedido_id: IdRuta, datos: ModeloNuevo, request: Request):
+def agregar_modelo(pedido_id: IdRuta, datos: ModeloNuevo, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        if con.execute(select(base.pedidos.c.id).where(base.pedidos.c.id == pedido_id)).first() is None:
-            raise HTTPException(status_code=404, detail="No existe ese pedido")
+        _pedido_o_404(con, pedido_id, correo)
         cuantos, ultimo = con.execute(
             select(func.count(), func.coalesce(func.max(base.modelos.c.orden), -1))
             .where(base.modelos.c.pedido_id == pedido_id)
@@ -380,23 +407,23 @@ def agregar_modelo(pedido_id: IdRuta, datos: ModeloNuevo, request: Request):
         modelo_id = con.execute(base.modelos.insert().values(
             pedido_id=pedido_id, nombre=datos.nombre, meta=datos.meta, orden=ultimo + 1,
         )).inserted_primary_key[0]
-        return _modelo_con_hechas(con, modelo_id)
+        return _modelo_con_hechas(con, modelo_id, correo)
 
 
 @router.patch("/api/modelos/{modelo_id}")
-def editar_modelo(modelo_id: IdRuta, datos: ModeloCambios, request: Request):
+def editar_modelo(modelo_id: IdRuta, datos: ModeloCambios, request: Request, correo: Correo):
     cambios = datos.model_dump(exclude_unset=True)
     with request.app.state.motor_sistema.begin() as con:
-        _modelo_o_404(con, modelo_id)
+        _modelo_o_404(con, modelo_id, correo)
         if cambios:
             con.execute(base.modelos.update().where(base.modelos.c.id == modelo_id).values(**cambios))
-        return _modelo_con_hechas(con, modelo_id)
+        return _modelo_con_hechas(con, modelo_id, correo)
 
 
 @router.delete("/api/modelos/{modelo_id}", status_code=204)
-def borrar_modelo(modelo_id: IdRuta, request: Request):
+def borrar_modelo(modelo_id: IdRuta, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        _modelo_o_404(con, modelo_id)
+        _modelo_o_404(con, modelo_id, correo)
         # Borrar un modelo con tandas haria desaparecer piezas ya impresas del
         # conteo; primero hay que borrar (a proposito) esas tandas.
         tiene = con.execute(
@@ -412,12 +439,11 @@ def borrar_modelo(modelo_id: IdRuta, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/pedidos/{pedido_id}/tandas")
-def listar_tandas(pedido_id: IdRuta, request: Request,
+def listar_tandas(pedido_id: IdRuta, request: Request, correo: Correo,
                   modelo_id: Annotated[int | None, Field(ge=1, le=MAX_ID)] = None):
     with request.app.state.motor_sistema.connect() as con:
-        if con.execute(select(base.pedidos.c.id).where(base.pedidos.c.id == pedido_id)).first() is None:
-            raise HTTPException(status_code=404, detail="No existe ese pedido")
-        consulta = _consulta_tandas().where(base.modelos.c.pedido_id == pedido_id)
+        _pedido_o_404(con, pedido_id, correo)
+        consulta = _consulta_tandas(correo).where(base.modelos.c.pedido_id == pedido_id)
         if modelo_id is not None:
             consulta = consulta.where(base.tandas.c.modelo_id == modelo_id)
         filas = con.execute(
@@ -426,19 +452,19 @@ def listar_tandas(pedido_id: IdRuta, request: Request,
 
 
 @router.post("/api/tandas", status_code=201)
-def crear_tanda(datos: TandaNueva, request: Request, response: Response):
+def crear_tanda(datos: TandaNueva, request: Request, response: Response, correo: Correo):
     motor = request.app.state.motor_sistema
     try:
         with motor.begin() as con:
             # Lo primero, antes de mirar parecidos: un reintento (timeout, cola
             # sin senal que se vacia dos veces) tiene que recibir la tanda que ya
             # quedo, jamas un 409 contra si misma.
-            existente = _buscar_por_id_cliente(con, datos.id_cliente)
+            existente = _buscar_por_id_cliente(con, datos.id_cliente, correo)
             if existente:
                 response.status_code = 200
                 return _tanda_json(existente)
 
-            _modelo_o_404(con, datos.modelo_id)
+            _modelo_o_404(con, datos.modelo_id, correo)
             cuando = datos.cuando or ahora_bogota()
 
             if not datos.forzar:
@@ -467,12 +493,12 @@ def crear_tanda(datos: TandaNueva, request: Request, response: Response):
                 modelo_id=datos.modelo_id, cantidad=datos.cantidad, cuando=cuando,
                 id_cliente=datos.id_cliente, creada=ahora_bogota(),
             )).inserted_primary_key[0]
-            return _tanda_json(_tanda_o_404(con, tanda_id))
+            return _tanda_json(_tanda_o_404(con, tanda_id, correo))
     except IntegrityError:
         # Dos envios de la misma tanda a la vez: los dos vieron "no existe" y el
         # UNIQUE de id_cliente dejo pasar solo uno. Al otro se le da la ganadora.
         with motor.connect() as con:
-            existente = _buscar_por_id_cliente(con, datos.id_cliente)
+            existente = _buscar_por_id_cliente(con, datos.id_cliente, correo)
         if existente is None:
             raise HTTPException(status_code=404, detail="No existe ese modelo")
         response.status_code = 200
@@ -480,18 +506,18 @@ def crear_tanda(datos: TandaNueva, request: Request, response: Response):
 
 
 @router.patch("/api/tandas/{tanda_id}")
-def editar_tanda(tanda_id: IdRuta, datos: TandaCambios, request: Request):
+def editar_tanda(tanda_id: IdRuta, datos: TandaCambios, request: Request, correo: Correo):
     cambios = datos.model_dump(exclude_unset=True)
     with request.app.state.motor_sistema.begin() as con:
-        _tanda_o_404(con, tanda_id)
+        _tanda_o_404(con, tanda_id, correo)
         if cambios:
             con.execute(base.tandas.update().where(base.tandas.c.id == tanda_id).values(**cambios))
-        return _tanda_json(_tanda_o_404(con, tanda_id))
+        return _tanda_json(_tanda_o_404(con, tanda_id, correo))
 
 
 @router.delete("/api/tandas/{tanda_id}", status_code=204)
-def borrar_tanda(tanda_id: IdRuta, request: Request):
+def borrar_tanda(tanda_id: IdRuta, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        _tanda_o_404(con, tanda_id)
+        _tanda_o_404(con, tanda_id, correo)
         con.execute(base.tandas.delete().where(base.tandas.c.id == tanda_id))
     return Response(status_code=204)

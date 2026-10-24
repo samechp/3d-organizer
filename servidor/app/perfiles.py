@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 from . import base
 from .acceso import usuario_actual
-from .pedidos import IdRuta
+from .pedidos import Correo, IdRuta
 
 # Todas las rutas piden sesion, igual que en pedidos.py.
 router = APIRouter(dependencies=[Depends(usuario_actual)])
@@ -146,15 +146,19 @@ def _filamento_json(f) -> dict:
     }
 
 
-def _perfil_o_404(con, perfil_id: int):
-    fila = con.execute(select(base.perfiles).where(base.perfiles.c.id == perfil_id)).first()
+# Perfiles y filamentos son de cada cuenta: el de otra responde como si no
+# existiera (404), igual que los pedidos.
+def _perfil_o_404(con, perfil_id: int, correo: str):
+    fila = con.execute(select(base.perfiles).where(
+        base.perfiles.c.id == perfil_id, base.perfiles.c.dueno == correo)).first()
     if fila is None:
         raise HTTPException(status_code=404, detail="No existe ese perfil")
     return fila
 
 
-def _filamento_o_404(con, filamento_id: int):
-    fila = con.execute(select(base.filamentos).where(base.filamentos.c.id == filamento_id)).first()
+def _filamento_o_404(con, filamento_id: int, correo: str):
+    fila = con.execute(select(base.filamentos).where(
+        base.filamentos.c.id == filamento_id, base.filamentos.c.dueno == correo)).first()
     if fila is None:
         raise HTTPException(status_code=404, detail="No existe ese filamento")
     return fila
@@ -164,9 +168,16 @@ def _nombre_repetido():
     return HTTPException(status_code=409, detail="Ya hay un perfil con ese nombre")
 
 
-def _apagar_los_demas(con, perfil_id: int):
+def _apagar_los_demas(con, perfil_id: int, correo: str):
+    # "Un solo activo" es por cuenta: no apaga los perfiles de nadie mas.
     con.execute(base.perfiles.update()
-                .where(base.perfiles.c.id != perfil_id).values(activo=False))
+                .where(base.perfiles.c.id != perfil_id, base.perfiles.c.dueno == correo)
+                .values(activo=False))
+
+
+def _cuantos_perfiles(con, correo: str) -> int:
+    return con.execute(select(func.count()).select_from(base.perfiles)
+                       .where(base.perfiles.c.dueno == correo)).scalar()
 
 
 # ---------------------------------------------------------------------------
@@ -174,28 +185,30 @@ def _apagar_los_demas(con, perfil_id: int):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/perfiles")
-def listar_perfiles(request: Request):
+def listar_perfiles(request: Request, correo: Correo):
     with request.app.state.motor_sistema.connect() as con:
-        filas = con.execute(select(base.perfiles).order_by(base.perfiles.c.id)).all()
+        filas = con.execute(select(base.perfiles).where(base.perfiles.c.dueno == correo)
+                            .order_by(base.perfiles.c.id)).all()
     return [_perfil_json(f) for f in filas]
 
 
 @router.post("/api/perfiles", status_code=201)
-def crear_perfil(datos: PerfilNuevo, request: Request):
-    valores = datos.model_dump()
+def crear_perfil(datos: PerfilNuevo, request: Request, correo: Correo):
+    valores = datos.model_dump() | {"dueno": correo}
     try:
         with request.app.state.motor_sistema.begin() as con:
             if con.execute(select(base.perfiles.c.id)
-                           .where(base.perfiles.c.nombre == datos.nombre)).first():
+                           .where(base.perfiles.c.nombre == datos.nombre,
+                                  base.perfiles.c.dueno == correo)).first():
                 raise _nombre_repetido()
-            hay_otros = con.execute(select(func.count()).select_from(base.perfiles)).scalar() > 0
+            hay_otros = _cuantos_perfiles(con, correo) > 0
             # El primero siempre queda activo: sin perfil activo la app no sabe
             # con que costos calcular.
             valores["activo"] = datos.activo or not hay_otros
             perfil_id = con.execute(base.perfiles.insert().values(**valores)).inserted_primary_key[0]
             if valores["activo"]:
-                _apagar_los_demas(con, perfil_id)
-            return _perfil_json(_perfil_o_404(con, perfil_id))
+                _apagar_los_demas(con, perfil_id, correo)
+            return _perfil_json(_perfil_o_404(con, perfil_id, correo))
     except IntegrityError:
         # Dos altas a la vez con el mismo nombre: las dos vieron "no existe" y el
         # UNIQUE dejo pasar solo una.
@@ -203,13 +216,14 @@ def crear_perfil(datos: PerfilNuevo, request: Request):
 
 
 @router.patch("/api/perfiles/{perfil_id}")
-def editar_perfil(perfil_id: IdRuta, datos: PerfilCambios, request: Request):
+def editar_perfil(perfil_id: IdRuta, datos: PerfilCambios, request: Request, correo: Correo):
     cambios = datos.model_dump(exclude_unset=True)
     try:
         with request.app.state.motor_sistema.begin() as con:
-            actual = _perfil_o_404(con, perfil_id)
+            actual = _perfil_o_404(con, perfil_id, correo)
             if "nombre" in cambios and con.execute(
                     select(base.perfiles.c.id).where(base.perfiles.c.nombre == cambios["nombre"],
+                                                     base.perfiles.c.dueno == correo,
                                                      base.perfiles.c.id != perfil_id)).first():
                 raise _nombre_repetido()
             if cambios.get("activo") is False and actual.activo:
@@ -219,22 +233,23 @@ def editar_perfil(perfil_id: IdRuta, datos: PerfilCambios, request: Request):
             if cambios:
                 con.execute(base.perfiles.update().where(base.perfiles.c.id == perfil_id).values(**cambios))
             if cambios.get("activo"):
-                _apagar_los_demas(con, perfil_id)
-            return _perfil_json(_perfil_o_404(con, perfil_id))
+                _apagar_los_demas(con, perfil_id, correo)
+            return _perfil_json(_perfil_o_404(con, perfil_id, correo))
     except IntegrityError:
         raise _nombre_repetido()
 
 
 @router.delete("/api/perfiles/{perfil_id}", status_code=204)
-def borrar_perfil(perfil_id: IdRuta, request: Request):
+def borrar_perfil(perfil_id: IdRuta, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        perfil = _perfil_o_404(con, perfil_id)
-        if con.execute(select(func.count()).select_from(base.perfiles)).scalar() <= 1:
+        perfil = _perfil_o_404(con, perfil_id, correo)
+        if _cuantos_perfiles(con, correo) <= 1:
             raise HTTPException(status_code=409, detail="No se puede borrar el último perfil")
         con.execute(base.perfiles.delete().where(base.perfiles.c.id == perfil_id))
         if perfil.activo:
             # Pasa la marca al mas antiguo que queda, para no dejar la app sin activo.
-            heredero = con.execute(select(func.min(base.perfiles.c.id))).scalar()
+            heredero = con.execute(select(func.min(base.perfiles.c.id))
+                                   .where(base.perfiles.c.dueno == correo)).scalar()
             con.execute(base.perfiles.update().where(base.perfiles.c.id == heredero).values(activo=True))
     return Response(status_code=204)
 
@@ -244,34 +259,35 @@ def borrar_perfil(perfil_id: IdRuta, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/filamentos")
-def listar_filamentos(request: Request):
+def listar_filamentos(request: Request, correo: Correo):
     with request.app.state.motor_sistema.connect() as con:
-        filas = con.execute(select(base.filamentos).order_by(base.filamentos.c.id)).all()
+        filas = con.execute(select(base.filamentos).where(base.filamentos.c.dueno == correo)
+                            .order_by(base.filamentos.c.id)).all()
     return [_filamento_json(f) for f in filas]
 
 
 @router.post("/api/filamentos", status_code=201)
-def crear_filamento(datos: FilamentoNuevo, request: Request):
+def crear_filamento(datos: FilamentoNuevo, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        filamento_id = con.execute(
-            base.filamentos.insert().values(**datos.model_dump())).inserted_primary_key[0]
-        return _filamento_json(_filamento_o_404(con, filamento_id))
+        filamento_id = con.execute(base.filamentos.insert().values(
+            **datos.model_dump(), dueno=correo)).inserted_primary_key[0]
+        return _filamento_json(_filamento_o_404(con, filamento_id, correo))
 
 
 @router.patch("/api/filamentos/{filamento_id}")
-def editar_filamento(filamento_id: IdRuta, datos: FilamentoCambios, request: Request):
+def editar_filamento(filamento_id: IdRuta, datos: FilamentoCambios, request: Request, correo: Correo):
     cambios = datos.model_dump(exclude_unset=True)
     with request.app.state.motor_sistema.begin() as con:
-        _filamento_o_404(con, filamento_id)
+        _filamento_o_404(con, filamento_id, correo)
         if cambios:
             con.execute(base.filamentos.update()
                         .where(base.filamentos.c.id == filamento_id).values(**cambios))
-        return _filamento_json(_filamento_o_404(con, filamento_id))
+        return _filamento_json(_filamento_o_404(con, filamento_id, correo))
 
 
 @router.delete("/api/filamentos/{filamento_id}", status_code=204)
-def borrar_filamento(filamento_id: IdRuta, request: Request):
+def borrar_filamento(filamento_id: IdRuta, request: Request, correo: Correo):
     with request.app.state.motor_sistema.begin() as con:
-        _filamento_o_404(con, filamento_id)
+        _filamento_o_404(con, filamento_id, correo)
         con.execute(base.filamentos.delete().where(base.filamentos.c.id == filamento_id))
     return Response(status_code=204)

@@ -17,7 +17,8 @@ import os
 
 from sqlalchemy import (
     CHAR, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey,
-    Index, Integer, MetaData, Numeric, String, Table, Text, create_engine, func, text,
+    Index, Integer, MetaData, Numeric, String, Table, Text, UniqueConstraint,
+    create_engine, func, text,
 )
 
 
@@ -91,9 +92,12 @@ usuarios_tienda = Table(
     Column("debe_cambiar", Integer),
 )
 
+# dueno: correo de la cuenta que creo el renglon. Cada cuenta ve y cambia solo
+# lo suyo; modelos y tandas no lo llevan porque cuelgan de su pedido.
 pedidos = Table(
     "pedidos", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("dueno", String(120), nullable=False),
     Column("nombre", String(120), nullable=False),
     Column("cliente", String(120)),
     Column("entrega", Date),
@@ -104,6 +108,8 @@ pedidos = Table(
     Column("creado", DateTime, nullable=False, server_default=func.now()),
     Column("terminado_en", DateTime),
     CheckConstraint("estado IN ('abierto', 'terminado')", name="ck_pedidos_estado"),
+    # Toda consulta de pedidos filtra por dueno.
+    Index("ix_pedidos_dueno", "dueno"),
 )
 
 modelos = Table(
@@ -131,7 +137,8 @@ tandas = Table(
 perfiles = Table(
     "perfiles", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("nombre", String(80), nullable=False, unique=True),
+    Column("dueno", String(120), nullable=False),
+    Column("nombre", String(80), nullable=False),
     Column("precio_kwh", Numeric(14, 2), nullable=False),
     Column("consumo_watts", Numeric(14, 2), nullable=False),
     Column("vida_maquina_h", Numeric(14, 2), nullable=False),
@@ -139,6 +146,10 @@ perfiles = Table(
     Column("margen_error", Numeric(14, 2), nullable=False),
     Column("precio_dolar", Numeric(14, 2)),
     Column("activo", Boolean, nullable=False, server_default="1"),
+    # El nombre se puede repetir entre cuentas (cada una tiene su "Bambu"), no
+    # dentro de la misma.
+    UniqueConstraint("dueno", "nombre", name="ux_perfiles_dueno_nombre"),
+    Index("ix_perfiles_dueno", "dueno"),
 )
 
 filamentos = Table(
@@ -150,6 +161,8 @@ filamentos = Table(
     Column("hex", String(7)),
     Column("precio_kg", Numeric(14, 2), nullable=False),
     Column("moneda", String(3), nullable=False),
+    Column("dueno", String(120), nullable=False),
+    Index("ix_filamentos_dueno", "dueno"),
 )
 
 

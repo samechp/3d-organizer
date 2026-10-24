@@ -279,6 +279,41 @@ hace Juan despues, con su correo y su contrasena de PrintoVerse (o el importador
 de perfiles, que tambien entra). Hasta entonces solo esta comprobado que el
 usuario `sistema_lee` puede leer la tabla (paso 3).
 
+## Migracion: un dueno por renglon (una sola vez)
+
+Desde que hay cuentas de ayudantes, cada cuenta ve solo sus pedidos, perfiles y
+filamentos. La base que ya estaba en produccion necesita la columna `dueno`
+(`crear_tablas` solo crea tablas que faltan, no agrega columnas a las que ya
+existen). Todo lo anterior queda a nombre de Juan.
+
+Se hace **justo antes** del primer `desplegar.sh` con este cambio: el codigo
+nuevo sin la columna da error 500, y el viejo no sabe llenarla.
+
+```bash
+set -euo pipefail
+CORREO='PON_AQUI_EL_CORREO_DE_JUAN'    # el mismo de SISTEMA_CORREO_PERMITIDO
+case "$CORREO" in *@*.*) ;; *) echo "Falta poner el correo"; exit 1 ;; esac
+
+# 1. Copia de seguridad (no se borra hasta comprobar que todo va bien).
+sudo mysqldump --single-transaction sistema > ~/sistema-antes-de-dueno-$(date +%F).sql
+ls -l ~/sistema-antes-de-dueno-*.sql
+
+# 2. El SQL sale del repo (main) sin cambiar aun el codigo que corre.
+git -C /opt/sistema/app fetch --quiet origin main
+git -C /opt/sistema/app show origin/main:servidor/despliegue/migracion-dueno.sql \
+  | sed "s/PON_AQUI_EL_CORREO/$CORREO/" | sudo mariadb sistema
+
+# 3. Codigo nuevo.
+bash /opt/sistema/app/servidor/despliegue/desplegar.sh
+```
+
+Al final de la migracion salen tres renglones `... sin dueno  0` y los indices
+de `perfiles` (debe aparecer `ux_perfiles_dueno_nombre` y ya no `nombre`). Se
+puede repetir sin danar nada. Para deshacer: `sudo mariadb sistema < ~/sistema-antes-de-dueno-<fecha>.sql`
+y volver a la version anterior del codigo (ver abajo).
+
+Aplicada: _pendiente (anotar aqui la fecha cuando se haga)_.
+
 ## Si algo sale mal
 
 **Ver que paso**
