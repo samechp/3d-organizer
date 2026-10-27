@@ -81,7 +81,8 @@ struct DetallePedidoVista: View {
             BotonPrincipal(titulo: "Anotar tanda", icono: "plus") {
                 hoja = HojaAnotar(modeloId: modeloSugerido())
             }
-            .disabled(detalle?.modelos.isEmpty ?? true)
+            // Los del stock no llevan tandas: sin ningún otro, no hay qué anotar.
+            .disabled(!(detalle?.modelos.contains(where: { !$0.esDelStock }) ?? false))
         }
         .refreshable { await cargar() }
         .task { await cargar() }
@@ -232,7 +233,9 @@ struct DetallePedidoVista: View {
             }
             .background(Color(.secondarySystemGroupedBackground),
                         in: RoundedRectangle(cornerRadius: Radio.tarjeta, style: .continuous))
-            Text("Toca la foto de un modelo para cambiarla.")
+            Text(!d.modelos.isEmpty && d.modelos.allSatisfy { $0.esDelStock }
+                 ? "Todos los modelos salen del stock: no llevan tandas. Toca la foto de un modelo para cambiarla."
+                 : "Toca la foto de un modelo para cambiarla.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -298,10 +301,11 @@ struct DetallePedidoVista: View {
     /// con el mismo) o, si no hay, el primero que no esté completo.
     private func modeloSugerido() -> Int? {
         guard let d = detalle else { return nil }
-        if let ultima = tandas.first, d.modelos.contains(where: { $0.id == ultima.modeloId }) {
+        let imprimibles = d.modelos.filter { !$0.esDelStock }
+        if let ultima = tandas.first, imprimibles.contains(where: { $0.id == ultima.modeloId }) {
             return ultima.modeloId
         }
-        return (d.modelos.first { !$0.completo } ?? d.modelos.first)?.id
+        return (imprimibles.first { !$0.completo } ?? imprimibles.first)?.id
     }
 
     private func cargar() async {
@@ -379,9 +383,25 @@ private struct FilaModelo: View {
                 }
                 BarraAvance(fraccion: modelo.meta > 0 ? Double(modelo.hechas) / Double(modelo.meta) : 0,
                             completo: modelo.completo, alto: 6)
-                Text(Formato.notaModelo(modelo))
-                    .font(modelo.completo ? Font.footnote.weight(.semibold) : Font.footnote)
-                    .foregroundStyle(modelo.completo ? Color.completoTexto : Color.secondary)
+                if let stock = modelo.delStock {
+                    Text("Del stock: \(stock.nombre)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if stock.saldo < 0 {
+                        Label("faltan \(Formato.num(-stock.saldo)) por imprimir en Productos",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.acentoTexto)
+                    }
+                } else if modelo.esDelStock {
+                    Text("Del stock")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(Formato.notaModelo(modelo))
+                        .font(modelo.completo ? Font.footnote.weight(.semibold) : Font.footnote)
+                        .foregroundStyle(modelo.completo ? Color.completoTexto : Color.secondary)
+                }
                 if let fallo {
                     Text(fallo)
                         .font(.footnote)
@@ -390,16 +410,19 @@ private struct FilaModelo: View {
             }
             .accessibilityElement(children: .combine)
 
-            Button(action: anotar) {
-                Image(systemName: "plus")
-                    .font(.body.weight(.bold))
-                    .foregroundStyle(Color.acentoTexto)
-                    .frame(width: 44, height: 44)
-                    .background(Color.acento.opacity(0.14), in: Circle())
-                    .contentShape(Circle())
+            // Del stock: sale de Productos, no se imprime por tandas.
+            if !modelo.esDelStock {
+                Button(action: anotar) {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(Color.acentoTexto)
+                        .frame(width: 44, height: 44)
+                        .background(Color.acento.opacity(0.14), in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Anotar tanda de \(modelo.nombre)")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Anotar tanda de \(modelo.nombre)")
         }
         .padding(.vertical, 10)
         .onChange(of: eleccion) { _, nueva in

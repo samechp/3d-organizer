@@ -41,12 +41,17 @@ struct AnotarTandaVista: View {
         self.detalle = detalle
         self.tandas = tandas
         self.alGuardar = alGuardar
-        _modeloId = State(initialValue: modeloInicial ?? detalle.modelos.first?.id ?? 0)
+        // Los del stock no se imprimen por tandas: no se pueden elegir.
+        let imprimibles = detalle.modelos.filter { $0.opcionId == nil }
+        let inicial = imprimibles.first { $0.id == modeloInicial } ?? imprimibles.first
+        _modeloId = State(initialValue: inicial?.id ?? 0)
         // Se empieza con la última cantidad: casi siempre sale lo mismo de la cama.
         _textoCantidad = State(initialValue: tandas.first.map { String($0.cantidad) } ?? "")
     }
 
-    private var modelo: Modelo? { detalle.modelos.first { $0.id == modeloId } }
+    private var imprimibles: [Modelo] { detalle.modelos.filter { $0.opcionId == nil } }
+
+    private var modelo: Modelo? { imprimibles.first { $0.id == modeloId } }
 
     /// La cantidad escrita, si es válida para el servidor (1 a 100.000).
     private var cantidad: Int? {
@@ -150,7 +155,7 @@ struct AnotarTandaVista: View {
         return VStack(alignment: .leading, spacing: 8) {
             titulo("Modelo")
             LazyVGrid(columns: columnas, spacing: 10) {
-                ForEach(detalle.modelos) { m in
+                ForEach(imprimibles) { m in
                     botonModelo(m)
                 }
             }

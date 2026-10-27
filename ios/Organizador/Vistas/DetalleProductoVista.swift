@@ -18,6 +18,8 @@ struct DetalleProductoVista: View {
     @State private var hoja: HojaAnotar? = nil
     @State private var editando = false
     @State private var editandoMovimiento: Movimiento? = nil
+    /// Una venta de un pedido que se tocó: no se edita aquí, se explica.
+    @State private var ventaDePedido: Movimiento? = nil
     /// Ventas de un toque que todavía esperan respuesta: ya se ven restadas.
     @State private var enVuelo: [TandaPendiente] = []
     /// Sube con cada venta o tanda guardada: dispara la háptica de éxito.
@@ -116,6 +118,14 @@ struct DetalleProductoVista: View {
         }
         .sheet(item: $editandoMovimiento) { m in
             EditarTandaVista(movimiento: m, alGuardar: { await cargar() }, alBorrar: { await cargar() })
+        }
+        .alert("Venta de un pedido", isPresented: Binding(
+            get: { ventaDePedido != nil },
+            set: { if !$0 { ventaDePedido = nil } }
+        ), presenting: ventaDePedido) { _ in
+            Button("Entendido", role: .cancel) {}
+        } message: { m in
+            Text("Esta venta es de un pedido (\(m.pedido ?? "sin nombre")): cámbiala desde el pedido.")
         }
     }
 
@@ -262,8 +272,13 @@ struct DetalleProductoVista: View {
     private func filaMovimiento(_ m: Movimiento) -> some View {
         let signo = (m.esVenta ? "−" : "+") + Formato.num(m.cantidad)
         let hora = m.fecha.map { Formato.cuando($0) } ?? ""
+        let texto = m.esDePedido ? "\(m.opcion) · Pedido \(m.pedido ?? "")" : "\(m.opcion) · \(m.tipo)"
         return Button {
-            editandoMovimiento = m
+            if m.esDePedido {
+                ventaDePedido = m
+            } else {
+                editandoMovimiento = m
+            }
         } label: {
             HStack(spacing: 12) {
                 Text(signo)
@@ -271,7 +286,7 @@ struct DetalleProductoVista: View {
                     .monospacedDigit()
                     .foregroundStyle(m.esVenta ? Color.primary : Color.completoTexto)
                     .frame(minWidth: 44, alignment: .leading)
-                Text("\(m.opcion) · \(m.tipo)")
+                Text(texto)
                     .font(.body)
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -288,8 +303,9 @@ struct DetalleProductoVista: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(signo) \(m.opcion), \(m.tipo), \(hora)")
-        .accessibilityHint("Toca para corregir")
+        .accessibilityLabel(m.esDePedido ? "\(signo) \(m.opcion), venta del pedido \(m.pedido ?? ""), \(hora)"
+                                         : "\(signo) \(m.opcion), \(m.tipo), \(hora)")
+        .accessibilityHint(m.esDePedido ? "Se cambia desde el pedido" : "Toca para corregir")
     }
 
     // MARK: - Acciones

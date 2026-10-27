@@ -109,6 +109,21 @@ struct Modelo: Codable, Hashable, Identifiable {
     let completo: Bool
     let deMas: Int
     let faltan: Int
+    /// Del stock: sale de esta opción de Productos (no lleva tandas y hechas = meta).
+    var opcionId: Int? = nil
+    var delStock: DelStock? = nil
+
+    var esDelStock: Bool { opcionId != nil }
+}
+
+/// De dónde sale un modelo del stock. saldo < 0: faltan piezas por imprimir en Productos.
+struct DelStock: Codable, Hashable {
+    let productoId: Int
+    let producto: String
+    let opcion: String
+    let saldo: Int
+
+    var nombre: String { "\(producto) · \(opcion)" }
 }
 
 struct Tanda: Codable, Hashable, Identifiable {
@@ -189,9 +204,12 @@ extension KeyedEncodingContainer {
     }
 }
 
+/// Nuevo: nombre + meta. Del stock: opcionId + meta (sin nombre, el servidor
+/// pone "Producto · Opción"). Los nil no se mandan.
 struct ModeloNuevo: Codable, Hashable {
-    var nombre: String
+    var nombre: String?
     var meta: Int
+    var opcionId: Int? = nil
 }
 
 struct PedidoNuevo: Codable, Hashable {
@@ -401,8 +419,14 @@ struct Movimiento: Codable, Hashable, Identifiable {
     let cantidad: Int
     let cuando: String
     let idCliente: String?
+    /// Solo en las ventas de un modelo del stock: se cambian desde el pedido.
+    var modeloId: Int? = nil
+    var pedidoId: Int? = nil
+    /// Nombre del pedido.
+    var pedido: String? = nil
 
     var esVenta: Bool { tipo == "venta" }
+    var esDePedido: Bool { modeloId != nil }
     var fecha: Date? { Fechas.hora(cuando) }
 }
 
