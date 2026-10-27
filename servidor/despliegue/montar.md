@@ -380,3 +380,4 @@ Correr cada una con `sudo mariadb sistema < servidor/despliegue/<archivo>` ANTES
 
 - `migracion-dueno.sql`: 2026-10-24.
 - `migracion-productos-id-cliente.sql`: 2026-10-24 (respaldo previo `/opt/sistema/respaldo-20261024-1432-antes-de-id-cliente.sql`).
+- `migracion-del-stock.sql`: 2026-10-27 (respaldo previo `/opt/sistema/respaldo-20261027-0003-antes-de-del-stock.sql`).
