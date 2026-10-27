@@ -125,6 +125,10 @@ modelos = Table(
     Column("meta", Integer, nullable=False),
     Column("foto", String(80)),
     Column("orden", Integer, nullable=False, server_default="0"),
+    # Modelo "del stock": sale de esta opcion de Productos en vez de imprimirse.
+    # NULL en los modelos de siempre (se imprimen por tandas).
+    Column("opcion_id", Integer, ForeignKey("opciones.id", name="fk_modelos_opcion")),
+    Index("ix_modelos_opcion", "opcion_id"),
 )
 
 tandas = Table(
@@ -212,8 +216,12 @@ movimientos = Table(
     # Igual que en tandas: el UUID de la app hace que un reenvio no cuente dos veces.
     Column("id_cliente", CHAR(36), nullable=False, unique=True),
     Column("creada", DateTime, nullable=False),
+    # La venta que descuenta un modelo "del stock" de un pedido. Unico: un modelo
+    # tiene a lo sumo una venta, la que se ajusta al cambiar su meta.
+    Column("modelo_id", Integer, ForeignKey("modelos.id", name="fk_movimientos_modelo")),
     CheckConstraint("tipo IN ('venta', 'tanda')", name="ck_movimientos_tipo"),
     Index("ix_movimientos_opcion", "opcion_id"),
+    Index("ux_movimientos_modelo", "modelo_id", unique=True),
 )
 
 

@@ -74,6 +74,8 @@ def _movimiento_json(fila) -> dict:
     return {
         "id": fila.id, "opcion_id": fila.opcion_id, "opcion": fila.opcion, "tipo": fila.tipo,
         "cantidad": fila.cantidad, "cuando": pedidos._hora(fila.cuando), "id_cliente": fila.id_cliente,
+        # La venta de un modelo del stock: la web la rotula "Pedido <nombre>".
+        "modelo_id": fila.modelo_id, "pedido_id": fila.pedido_id, "pedido": fila.pedido,
     }
 
 
@@ -86,8 +88,13 @@ def _consulta_movimientos(correo: str):
     return select(
         base.movimientos.c.id, base.movimientos.c.opcion_id, base.opciones.c.nombre.label("opcion"),
         base.movimientos.c.tipo, base.movimientos.c.cantidad, base.movimientos.c.cuando,
-        base.movimientos.c.id_cliente,
-    ).select_from(_movimientos_con_producto()).where(base.productos.c.dueno == correo)
+        base.movimientos.c.id_cliente, base.movimientos.c.modelo_id,
+        base.pedidos.c.id.label("pedido_id"), base.pedidos.c.nombre.label("pedido"),
+    ).select_from(
+        _movimientos_con_producto()
+        .outerjoin(base.modelos, base.modelos.c.id == base.movimientos.c.modelo_id)
+        .outerjoin(base.pedidos, base.pedidos.c.id == base.modelos.c.pedido_id)
+    ).where(base.productos.c.dueno == correo)
 
 
 def _recientes_primero(consulta):
@@ -168,6 +175,15 @@ def _movimiento_o_404(con, movimiento_id: int, correo: str):
     fila = con.execute(_consulta_movimientos(correo).where(base.movimientos.c.id == movimiento_id)).first()
     if fila is None:
         raise HTTPException(status_code=404, detail="No existe ese movimiento")
+    return fila
+
+
+def _movimiento_suelto_o_409(con, movimiento_id: int, correo: str):
+    # La venta de un pedido se cambia desde el pedido: si no, su meta y el stock
+    # dirian cosas distintas.
+    fila = _movimiento_o_404(con, movimiento_id, correo)
+    if fila.modelo_id is not None:
+        raise HTTPException(status_code=409, detail="Esta venta es de un pedido: cámbiala desde el pedido")
     return fila
 
 
@@ -381,7 +397,7 @@ def editar_movimiento(movimiento_id: pedidos.IdRuta, datos: MovimientoCambios, r
                       correo: pedidos.Correo):
     cambios = datos.model_dump(exclude_unset=True)
     with request.app.state.motor_sistema.begin() as con:
-        _movimiento_o_404(con, movimiento_id, correo)
+        _movimiento_suelto_o_409(con, movimiento_id, correo)
         if cambios:
             con.execute(base.movimientos.update().where(base.movimientos.c.id == movimiento_id)
                         .values(**cambios))
@@ -391,6 +407,6 @@ def editar_movimiento(movimiento_id: pedidos.IdRuta, datos: MovimientoCambios, r
 @router.delete("/api/movimientos/{movimiento_id}", status_code=204)
 def borrar_movimiento(movimiento_id: pedidos.IdRuta, request: Request, correo: pedidos.Correo):
     with request.app.state.motor_sistema.begin() as con:
-        _movimiento_o_404(con, movimiento_id, correo)
+        _movimiento_suelto_o_409(con, movimiento_id, correo)
         con.execute(base.movimientos.delete().where(base.movimientos.c.id == movimiento_id))
     return Response(status_code=204)

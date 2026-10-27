@@ -227,6 +227,7 @@ textarea.campo { padding: 10px 12px; min-height: 88px; resize: vertical; }
 .modelo.completo .barra-mini > div { background: var(--verde); }
 .modelo-nota { font-size: 13px; color: var(--suave); }
 .modelo.completo .modelo-nota { color: var(--verde-texto); font-weight: 600; }
+.modelo-aviso { font-size: 13px; font-weight: 600; color: var(--aviso-texto); }
 .modelo-foto-boton {
   align-self: flex-start; background: none; border: 0; padding: 0; min-height: 28px;
   color: var(--acento-texto); font-size: 13px; font-weight: 600;
@@ -282,6 +283,8 @@ legend { padding: 0; margin-bottom: 6px; }
 .filas-modelos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .fila-modelo { display: grid; grid-template-columns: 1fr 110px auto; gap: 8px; align-items: end; }
 .fila-modelo .eti { min-width: 0; }
+/* Pedido: tipo (Nuevo / Del stock) delante del nombre o producto. */
+.fila-modelo.fila-pedido { grid-template-columns: 120px 1fr 110px auto; }
 .dialogo-botones { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- Avisos ---------- */
@@ -303,6 +306,8 @@ legend { padding: 0; margin-bottom: 6px; }
   .avance-total { font-size: 26px; }
   .fila-modelo { grid-template-columns: 1fr 96px; }
   .fila-modelo .boton-peligro { grid-column: 1 / -1; }
+  .fila-modelo.fila-pedido { grid-template-columns: 1fr 96px; }
+  .fila-pedido .tipo { grid-column: 1 / -1; }
 }
 
 .nota-pedido { margin-top: 10px; }

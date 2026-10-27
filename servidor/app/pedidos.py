@@ -19,8 +19,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import (
     AfterValidator, BaseModel, BeforeValidator, Field, StringConstraints, field_validator,
+    model_validator,
 )
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 
 from . import base, calculos
@@ -110,8 +111,17 @@ IdRuta = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 
 class ModeloNuevo(BaseModel):
-    nombre: NombreModelo
+    # Nuevo: nombre + meta, se imprime por tandas. Del stock: opcion_id + meta,
+    # sale de esa opcion de Productos (el nombre, si no viene, es "Producto · Opción").
+    nombre: NombreModelo | None = None
     meta: Meta
+    opcion_id: IdEnBody | None = None
+
+    @model_validator(mode="after")
+    def _nombre_u_opcion(self):
+        if self.nombre is None and self.opcion_id is None:
+            raise ValueError("Falta el nombre del modelo")
+        return self
 
 
 class PedidoNuevo(BaseModel):
@@ -152,6 +162,9 @@ class PedidoCambios(BaseModel):
 class ModeloCambios(BaseModel):
     nombre: NombreModelo | None = None
     meta: Meta | None = None
+    # Solo para rechazarlo con un mensaje claro: cambiar de opcion moveria la
+    # venta de un producto a otro sin que se note en ninguno de los dos.
+    opcion_id: int | None = None
 
     @field_validator("nombre", "meta")
     @classmethod
@@ -159,6 +172,11 @@ class ModeloCambios(BaseModel):
         if v is None:
             raise ValueError("No puede ser null")
         return v
+
+    @field_validator("opcion_id", mode="before")
+    @classmethod
+    def _opcion_fija(cls, v):
+        raise ValueError("El producto de un modelo del stock no se cambia: borra el modelo y agrégalo de nuevo")
 
 
 class TandaNueva(BaseModel):
@@ -212,9 +230,14 @@ def _consulta_tandas(correo: str):
     ).select_from(_tandas_con_pedido()).where(base.pedidos.c.dueno == correo)
 
 
-def _modelo_json(fila, hechas: int) -> dict:
+def _modelo_json(fila, hechas: int, del_stock: dict | None = None) -> dict:
+    if fila.opcion_id is not None:
+        # Del stock: ya salio de Productos, asi que cuenta como hecho. Si alli
+        # falta stock, lo dice del_stock.saldo; el pedido no lo vuelve a contar.
+        hechas = fila.meta
     return {
         "id": fila.id, "nombre": fila.nombre, "meta": fila.meta, "hechas": hechas,
+        "opcion_id": fila.opcion_id, "del_stock": del_stock,
         "foto_url": f"/api/fotos/{fila.foto}" if fila.foto else None,
         "completo": hechas >= fila.meta,
         # Pasarse de la meta es normal (sobran piezas de prueba o de repuesto):
@@ -222,6 +245,63 @@ def _modelo_json(fila, hechas: int) -> dict:
         "de_mas": max(0, hechas - fila.meta),
         "faltan": max(0, fila.meta - hechas),
     }
+
+
+def _del_stock(con, opcion_ids: list[int]) -> dict[int, dict]:
+    """Producto, opcion y saldo actual de las opciones de modelos del stock.
+
+    Sin filtro de dueno: los opcion_id salen de modelos ya filtrados por su
+    pedido, y al crearlos se comprobo que la opcion era de la misma cuenta.
+    """
+    if not opcion_ids:
+        return {}
+    m = base.movimientos.c
+    saldo = func.coalesce(func.sum(case((m.tipo == "tanda", m.cantidad), else_=-m.cantidad)), 0)
+    filas = con.execute(
+        select(base.opciones.c.id, base.opciones.c.nombre, base.productos.c.id.label("producto_id"),
+               base.productos.c.nombre.label("producto"), saldo.label("saldo"))
+        .select_from(base.opciones
+                     .join(base.productos, base.productos.c.id == base.opciones.c.producto_id)
+                     .outerjoin(base.movimientos, m.opcion_id == base.opciones.c.id))
+        .where(base.opciones.c.id.in_(set(opcion_ids)))
+        .group_by(base.opciones.c.id, base.opciones.c.nombre, base.productos.c.id, base.productos.c.nombre)
+    ).all()
+    return {f.id: {"producto_id": f.producto_id, "producto": f.producto, "opcion": f.nombre,
+                   "saldo": int(f.saldo)} for f in filas}
+
+
+def _opcion_o_404(con, opcion_id: int, correo: str):
+    # Aqui y no importando productos.py, que ya importa este modulo.
+    fila = con.execute(
+        select(base.opciones.c.id, base.opciones.c.nombre, base.productos.c.nombre.label("producto"))
+        .select_from(base.opciones.join(base.productos, base.productos.c.id == base.opciones.c.producto_id))
+        .where(base.opciones.c.id == opcion_id, base.productos.c.dueno == correo)).first()
+    if fila is None:
+        raise HTTPException(status_code=404, detail="No existe esa opción")
+    return fila
+
+
+def _insertar_modelo(con, pedido_id: int, datos: ModeloNuevo, orden: int, correo: str) -> int:
+    """Inserta un modelo; si es del stock, tambien la venta que lo descuenta.
+
+    Va en la misma transaccion que el pedido: nunca queda un modelo del stock
+    sin su venta ni una venta sin su modelo.
+    """
+    nombre = datos.nombre
+    if datos.opcion_id is not None:
+        opcion = _opcion_o_404(con, datos.opcion_id, correo)
+        # modelos.nombre mide 80; producto + opcion pueden pasarse.
+        nombre = nombre or f"{opcion.producto} · {opcion.nombre}"[:80]
+    modelo_id = con.execute(base.modelos.insert().values(
+        pedido_id=pedido_id, nombre=nombre, meta=datos.meta, orden=orden, opcion_id=datos.opcion_id,
+    )).inserted_primary_key[0]
+    if datos.opcion_id is not None:
+        ahora = ahora_bogota()
+        # Si no alcanza el stock, el saldo queda negativo: Productos lo muestra como "faltan".
+        con.execute(base.movimientos.insert().values(
+            opcion_id=datos.opcion_id, tipo="venta", cantidad=datos.meta, cuando=ahora,
+            id_cliente=str(uuid.uuid4()), creada=ahora, modelo_id=modelo_id))
+    return modelo_id
 
 
 def _modelos_por_pedido(con, pedido_ids: list[int]) -> dict[int, list[dict]]:
@@ -240,10 +320,11 @@ def _modelos_por_pedido(con, pedido_ids: list[int]) -> dict[int, list[dict]]:
         .group_by(*base.modelos.c)
         .order_by(base.modelos.c.orden, base.modelos.c.id)
     ).all()
+    stock = _del_stock(con, [f.opcion_id for f in filas if f.opcion_id is not None])
     por_pedido: dict[int, list[dict]] = {i: [] for i in pedido_ids}
     for f in filas:
         # int(): MySQL devuelve SUM como Decimal.
-        por_pedido[f.pedido_id].append(_modelo_json(f, int(f.hechas)))
+        por_pedido[f.pedido_id].append(_modelo_json(f, int(f.hechas), stock.get(f.opcion_id)))
     return por_pedido
 
 
@@ -308,7 +389,8 @@ def _modelo_con_hechas(con, modelo_id: int, correo: str) -> dict:
         select(func.coalesce(func.sum(base.tandas.c.cantidad), 0))
         .where(base.tandas.c.modelo_id == modelo_id)
     ).scalar()
-    return _modelo_json(fila, int(hechas))
+    stock = _del_stock(con, [fila.opcion_id] if fila.opcion_id is not None else [])
+    return _modelo_json(fila, int(hechas), stock.get(fila.opcion_id))
 
 
 def _tanda_o_404(con, tanda_id: int, correo: str):
@@ -361,10 +443,8 @@ def crear_pedido(datos: PedidoNuevo, request: Request, correo: Correo):
             dueno=correo, nombre=datos.nombre, cliente=datos.cliente, entrega=datos.entrega,
             nota=datos.nota, estado="abierto", creado=ahora_bogota(),
         )).inserted_primary_key[0]
-        con.execute(base.modelos.insert(), [
-            {"pedido_id": pedido_id, "nombre": m.nombre, "meta": m.meta, "orden": i}
-            for i, m in enumerate(datos.modelos)
-        ])
+        for i, m in enumerate(datos.modelos):
+            _insertar_modelo(con, pedido_id, m, i, correo)
         return _detalle(con, pedido_id, correo)
 
 
@@ -404,9 +484,7 @@ def agregar_modelo(pedido_id: IdRuta, datos: ModeloNuevo, request: Request, corr
         ).one()
         if cuantos >= MAX_MODELOS:
             raise HTTPException(status_code=409, detail=f"Un pedido admite hasta {MAX_MODELOS} modelos")
-        modelo_id = con.execute(base.modelos.insert().values(
-            pedido_id=pedido_id, nombre=datos.nombre, meta=datos.meta, orden=ultimo + 1,
-        )).inserted_primary_key[0]
+        modelo_id = _insertar_modelo(con, pedido_id, datos, ultimo + 1, correo)
         return _modelo_con_hechas(con, modelo_id, correo)
 
 
@@ -417,6 +495,10 @@ def editar_modelo(modelo_id: IdRuta, datos: ModeloCambios, request: Request, cor
         _modelo_o_404(con, modelo_id, correo)
         if cambios:
             con.execute(base.modelos.update().where(base.modelos.c.id == modelo_id).values(**cambios))
+        if "meta" in cambios:
+            # Del stock: la venta sigue a la meta (un modelo nuevo no tiene venta: no cambia nada).
+            con.execute(base.movimientos.update().where(base.movimientos.c.modelo_id == modelo_id)
+                        .values(cantidad=cambios["meta"]))
         return _modelo_con_hechas(con, modelo_id, correo)
 
 
@@ -430,6 +512,8 @@ def borrar_modelo(modelo_id: IdRuta, request: Request, correo: Correo):
             select(base.tandas.c.id).where(base.tandas.c.modelo_id == modelo_id).limit(1)).first()
         if tiene:
             raise HTTPException(status_code=409, detail="El modelo ya tiene tandas; borralas primero")
+        # Del stock: borrar su venta devuelve esas piezas al stock del producto.
+        con.execute(base.movimientos.delete().where(base.movimientos.c.modelo_id == modelo_id))
         con.execute(base.modelos.delete().where(base.modelos.c.id == modelo_id))
     return Response(status_code=204)
 
@@ -464,7 +548,9 @@ def crear_tanda(datos: TandaNueva, request: Request, response: Response, correo:
                 response.status_code = 200
                 return _tanda_json(existente)
 
-            _modelo_o_404(con, datos.modelo_id, correo)
+            if _modelo_o_404(con, datos.modelo_id, correo).opcion_id is not None:
+                raise HTTPException(status_code=409,
+                                    detail="Este modelo sale del stock: anota las tandas en Productos")
             cuando = datos.cuando or ahora_bogota()
 
             if not datos.forzar:

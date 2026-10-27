@@ -236,6 +236,7 @@ const estado = {
   aviso: null,            // la tanda parecida que mandó el 409
   enviando: false,
   dialogo: null,          // {modo: 'nuevo'|'editar', filas: [...]}
+  opcionesStock: null,    // [{id, texto}] de Productos para los modelos del stock; null = cargando
   seccion: null,          // 'pedidos' o 'productos': la pestaña que se ve
 };
 
@@ -444,9 +445,15 @@ function dibujarAvance(d) {
 
 function tarjetaModelo(m) {
   const pct = Math.min(100, (m.hechas / m.meta) * 100);
-  const nota = m.completo
-    ? (m.de_mas > 0 ? `Completo · ${num(m.de_mas)} de más` : 'Completo')
-    : `Faltan ${num(m.faltan)}`;
+  const s = m.del_stock;
+  const nota = s ? `Del stock: ${s.producto} · ${s.opcion}`
+    : m.completo
+      ? (m.de_mas > 0 ? `Completo · ${num(m.de_mas)} de más` : 'Completo')
+      : `Faltan ${num(m.faltan)}`;
+  // El pedido lo da por hecho, pero si el producto quedó en negativo hay que imprimirlo allá.
+  const aviso = s && s.saldo < 0
+    ? crear('span', { clase: 'modelo-aviso', texto: `Faltan ${num(-s.saldo)} por imprimir en Productos` })
+    : null;
 
   const foto = crear('div', { clase: 'modelo-foto', 'aria-hidden': m.foto_url ? false : 'true' });
   if (m.foto_url) {
@@ -477,7 +484,7 @@ function tarjetaModelo(m) {
         crear('span', { texto: `${num(m.hechas)} / ${num(m.meta)}` })),
       crear('div', { clase: 'barra-mini', 'aria-hidden': 'true' }, crear('div', { style: `width:${pct}%` })),
       crear('span', { clase: 'modelo-nota', texto: nota }),
-      botonFoto, entrada));
+      aviso, botonFoto, entrada));
 }
 
 function dibujarTarjetas(d) {
@@ -602,11 +609,13 @@ function prepararFormularioTanda(d) {
   const select = porId('tanda-modelo');
   const previo = select.value;
   vaciar(select);
-  d.modelos.forEach((m) => {
+  // Los del stock no llevan tandas: se imprimen (si faltan) desde Productos.
+  const imprimibles = d.modelos.filter((m) => m.opcion_id === null);
+  imprimibles.forEach((m) => {
     select.append(crear('option', { value: String(m.id), texto: m.completo ? `${m.nombre} (completo)` : m.nombre }));
   });
   if (d.id === estado.formPedidoId) {
-    if (d.modelos.some((m) => String(m.id) === previo)) select.value = previo;
+    if (imprimibles.some((m) => String(m.id) === previo)) select.value = previo;
   } else {
     estado.formPedidoId = d.id;
     porId('tanda-cantidad').value = '';
@@ -848,6 +857,7 @@ const MAX_MODELOS = 50;
 
 // Una fila del diálogo. `id` es null mientras el modelo no existe en el servidor.
 function crearFilaModelo(modelo) {
+  const delStock = !!(modelo && modelo.opcion_id !== null);
   const fila = {
     id: modelo ? modelo.id : null,
     nombreOriginal: modelo ? modelo.nombre : null,
@@ -855,29 +865,92 @@ function crearFilaModelo(modelo) {
     hechas: modelo ? modelo.hechas : 0,
     quitar: false,
   };
+  // Un modelo ya guardado no cambia de tipo ni de producto: el servidor ata su venta a esa opción.
+  fila.tipo = crear('select', { clase: 'campo', disabled: !!modelo, enchange: () => mostrarTipo(fila) },
+    crear('option', { value: 'nuevo', texto: 'Nuevo' }),
+    crear('option', { value: 'stock', texto: 'Del stock' }));
+  if (delStock) fila.tipo.value = 'stock';
   fila.nombre = crear('input', { clase: 'campo', type: 'text', maxlength: 80, required: true, value: modelo ? modelo.nombre : '' });
+  fila.opcion = crear('select', { clase: 'campo', disabled: !!modelo, enchange: () => actualizarEtiquetaQuitar(fila) });
+  if (delStock) {
+    const s = modelo.del_stock;
+    fila.opcion.append(crear('option', { value: String(modelo.opcion_id), texto: s ? `${s.producto} · ${s.opcion}` : modelo.nombre }));
+  } else {
+    llenarOpciones(fila);
+  }
   fila.meta = crear('input', {
     clase: 'campo', type: 'number', inputmode: 'numeric', min: 1, max: 1000000, step: 1, required: true,
     value: modelo ? String(modelo.meta) : '',
   });
-  const tieneTandas = fila.hechas > 0;
+  // Los del stock se pueden quitar siempre: su venta se borra y vuelve al stock.
+  const tieneTandas = fila.hechas > 0 && !delStock;
   fila.boton = crear('button', {
     type: 'button', clase: 'boton-peligro', texto: 'Quitar',
     disabled: tieneTandas,
     title: tieneTandas ? 'Este modelo ya tiene tandas: bórralas primero' : false,
     enclick: () => quitarFila(fila),
   });
-  fila.li = crear('li', { clase: 'fila-modelo' },
-    crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Modelo' }), fila.nombre),
-    crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Meta' }), fila.meta),
+  fila.etiquetaMeta = crear('span', { clase: 'etiqueta', texto: 'Meta' });
+  fila.campoNombre = crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Modelo' }), fila.nombre);
+  fila.campoOpcion = crear('label', { clase: 'eti' }, crear('span', { clase: 'etiqueta', texto: 'Producto' }), fila.opcion);
+  fila.li = crear('li', { clase: 'fila-modelo fila-pedido' },
+    crear('label', { clase: 'eti tipo' }, crear('span', { clase: 'etiqueta', texto: 'Tipo' }), fila.tipo),
+    fila.campoNombre, fila.campoOpcion,
+    crear('label', { clase: 'eti' }, fila.etiquetaMeta, fila.meta),
     fila.boton);
-  actualizarEtiquetaQuitar(fila);
+  mostrarTipo(fila);
   fila.nombre.addEventListener('input', () => actualizarEtiquetaQuitar(fila));
   return fila;
 }
 
+function esDelStock(fila) { return fila.tipo.value === 'stock'; }
+
+// Nuevo: nombre y meta. Del stock: producto y cantidad (el nombre lo pone el servidor).
+function mostrarTipo(fila) {
+  const stock = esDelStock(fila);
+  fila.campoNombre.hidden = stock;
+  fila.campoOpcion.hidden = !stock;
+  // Oculto y required frenaría el envío sin mostrar nada; deshabilitado no se valida.
+  fila.nombre.disabled = stock || fila.quitar;
+  fila.etiquetaMeta.textContent = stock ? 'Cantidad' : 'Meta';
+  actualizarEtiquetaQuitar(fila);
+}
+
 function actualizarEtiquetaQuitar(fila) {
-  fila.boton.setAttribute('aria-label', `Quitar modelo ${fila.nombre.value || 'sin nombre'}`);
+  const nombre = esDelStock(fila)
+    ? (fila.opcion.selectedOptions[0] && fila.opcion.value ? fila.opcion.selectedOptions[0].textContent : 'del stock sin elegir')
+    : (fila.nombre.value || 'sin nombre');
+  fila.boton.setAttribute('aria-label', `Quitar modelo ${nombre}`);
+}
+
+function llenarOpciones(fila) {
+  const select = fila.opcion;
+  const previo = select.value;
+  vaciar(select);
+  const lista = estado.opcionesStock;
+  if (!lista || !lista.length) {
+    select.append(crear('option', { value: '', texto: lista ? 'No hay productos todavía' : 'Cargando productos…' }));
+    return;
+  }
+  select.append(crear('option', { value: '', texto: 'Elige el producto' }));
+  lista.forEach((o) => select.append(crear('option', { value: String(o.id), texto: o.texto })));
+  if (lista.some((o) => String(o.id) === previo)) select.value = previo;
+}
+
+// Las opciones de Productos se piden al abrir el diálogo: así el stock que se ve es el de ahora.
+async function cargarOpcionesStock() {
+  estado.opcionesStock = null;
+  try {
+    const productos = await pedir('GET', '/api/productos');
+    estado.opcionesStock = productos.flatMap((p) => p.opciones.map((o) => ({
+      id: o.id,
+      texto: `${p.nombre} · ${o.nombre} (${o.saldo >= 0 ? `${num(o.saldo)} en stock` : `faltan ${num(-o.saldo)}`})`,
+    })));
+  } catch (e) {
+    estado.opcionesStock = [];
+    manejarError(e, 'pedido-error');
+  }
+  if (estado.dialogo) estado.dialogo.filas.filter((f) => f.id === null).forEach((f) => { llenarOpciones(f); actualizarEtiquetaQuitar(f); });
 }
 
 function quitarFila(fila) {
@@ -901,7 +974,8 @@ function quitarFila(fila) {
     fila.meta.disabled = true;
   }
   const visibles = d.filas.filter((f) => !f.quitar);
-  (visibles[Math.max(0, posicion - 1)] || visibles[0]).nombre.focus();
+  const destino = visibles[Math.max(0, posicion - 1)] || visibles[0];
+  (destino.nombre.disabled ? destino.meta : destino.nombre).focus();
   porId('agregar-modelo').hidden = visibles.length >= MAX_MODELOS;
 }
 
@@ -919,6 +993,7 @@ function abrirDialogo(modo) {
   const dialogo = porId('dialogo-pedido');
   const d = estado.detalle;
   estado.dialogo = { modo, filas: [] };
+  cargarOpcionesStock();
   vaciar(porId('filas-modelos'));
   mostrarError('pedido-error', '');
   porId('pedido-guardar').disabled = false;
@@ -958,9 +1033,12 @@ async function guardarPedido(evento) {
     entrega: porId('pedido-entrega').value || null,
     nota: porId('pedido-nota').value.trim() || null,
   };
-  const modelos = vivas.map((f) => ({ fila: f, nombre: f.nombre.value.trim(), meta: Number(f.meta.value) }));
+  const modelos = vivas.map((f) => ({
+    fila: f, stock: esDelStock(f), opcion_id: Number(f.opcion.value), nombre: f.nombre.value.trim(), meta: Number(f.meta.value),
+  }));
   for (const m of modelos) {
-    if (!m.nombre) { mostrarError('pedido-error', 'Todos los modelos necesitan nombre.'); m.fila.nombre.focus(); return; }
+    if (m.stock && !m.opcion_id) { mostrarError('pedido-error', 'Elige el producto de cada modelo del stock.'); m.fila.opcion.focus(); return; }
+    if (!m.stock && !m.nombre) { mostrarError('pedido-error', 'Todos los modelos necesitan nombre.'); m.fila.nombre.focus(); return; }
     if (!Number.isInteger(m.meta) || m.meta < 1 || m.meta > 1000000) {
       mostrarError('pedido-error', 'La meta de cada modelo va de 1 a 1.000.000.');
       m.fila.meta.focus();
@@ -972,7 +1050,7 @@ async function guardarPedido(evento) {
   try {
     if (d.modo === 'nuevo') {
       const nuevo = await pedir('POST', '/api/pedidos', {
-        ...datos, modelos: modelos.map((m) => ({ nombre: m.nombre, meta: m.meta })),
+        ...datos, modelos: modelos.map(cuerpoModelo),
       });
       porId('dialogo-pedido').close();
       anunciar('Pedido creado');
@@ -992,6 +1070,11 @@ async function guardarPedido(evento) {
   }
 }
 
+// Del stock: opcion_id y la cantidad como meta; el servidor anota la venta.
+function cuerpoModelo(m) {
+  return m.stock ? { opcion_id: m.opcion_id, meta: m.meta } : { nombre: m.nombre, meta: m.meta };
+}
+
 // Edita el pedido y luego sus modelos uno por uno. Cada paso hecho se anota en
 // su fila (id nuevo, nombre y meta guardados, fila quitada), así que si algo falla
 // a la mitad se puede volver a tocar Guardar sin repetir lo que ya quedó.
@@ -1009,7 +1092,7 @@ async function guardarCambiosPedido(datos, modelos) {
     for (const m of modelos) {
       const fila = m.fila;
       if (fila.id === null) {
-        const creado = await pedir('POST', `/api/pedidos/${id}/modelos`, { nombre: m.nombre, meta: m.meta });
+        const creado = await pedir('POST', `/api/pedidos/${id}/modelos`, cuerpoModelo(m));
         fila.id = creado.id;
         fila.nombreOriginal = creado.nombre;
         fila.metaOriginal = creado.meta;
@@ -1353,18 +1436,21 @@ function etiquetaMov(m) {
 
 function filaMovimiento(m) {
   const venta = m.tipo === 'venta';
+  // La venta de un pedido se cambia desde el pedido (su meta); aquí solo se muestra.
+  const dePedido = m.modelo_id !== null && m.modelo_id !== undefined;
+  const porPedido = dePedido ? 'Esta venta es de un pedido: cámbiala desde el pedido' : false;
   return crear('tr', { 'data-mov': m.id },
     crear('td', { clase: 'cuando', texto: cuandoTexto(m.cuando) }),
     crear('td', { texto: m.opcion }),
-    crear('td', { texto: venta ? 'Venta' : 'Tanda' }),
+    crear('td', { texto: dePedido ? `Pedido ${m.pedido}` : (venta ? 'Venta' : 'Tanda') }),
     crear('td', { clase: 'cantidad' + (venta ? '' : ' suma'), texto: (venta ? '−' : '+') + num(m.cantidad) }),
     crear('td', { clase: 'botones' },
       crear('button', {
-        type: 'button', clase: 'boton-suave', texto: 'Editar',
+        type: 'button', clase: 'boton-suave', texto: 'Editar', disabled: dePedido, title: porPedido,
         'aria-label': `Editar ${etiquetaMov(m)}`, enclick: () => editarMovimiento(m),
       }),
       crear('button', {
-        type: 'button', clase: 'boton-peligro', texto: 'Borrar',
+        type: 'button', clase: 'boton-peligro', texto: 'Borrar', disabled: dePedido, title: porPedido,
         'aria-label': `Borrar ${etiquetaMov(m)}`, enclick: () => borrarMovimiento(m),
       })));
 }
@@ -1828,7 +1914,7 @@ function conectarEventos() {
   porId('pedido-cancelar').addEventListener('click', () => porId('dialogo-pedido').close());
   porId('agregar-modelo').addEventListener('click', () => {
     const fila = agregarFila(null);
-    if (fila) fila.nombre.focus();
+    if (fila) fila.tipo.focus();
   });
 
   conectarEventosProductos();

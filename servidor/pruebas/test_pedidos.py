@@ -49,7 +49,8 @@ def test_crear_y_ver_detalle(cliente_con_sesion):
     assert [m["nombre"] for m in creado["modelos"]] == ["Dragon", "Zooki"]
     assert creado["modelos"][0] == {
         "id": creado["modelos"][0]["id"], "nombre": "Dragon", "meta": 1000, "hechas": 0,
-        "foto_url": None, "completo": False, "de_mas": 0, "faltan": 1000}
+        "foto_url": None, "completo": False, "de_mas": 0, "faltan": 1000,
+        "opcion_id": None, "del_stock": None}
     assert creado["avance"] == {
         "hechas_total": 0, "meta_total": 1500, "contadas": 0, "faltan": 1500, "porcentaje": 0}
     # Hoy 23/10 -> entrega 20/11 = 29 dias; 1500/29 = 51,7 -> 52 por dia.
