@@ -498,7 +498,8 @@ function dibujarDetalle() {
   const hay = !!d;
   porId('detalle').hidden = !hay;
   porId('caja-avance').hidden = !hay;
-  porId('caja-tanda').hidden = !hay;
+  // Si todos salen del stock no hay nada que anotar aquí: las tandas van en Productos.
+  porId('caja-tanda').hidden = !hay || d.modelos.every((m) => m.opcion_id !== null);
   porId('caja-historial').hidden = !hay;
   porId('sin-pedidos').hidden = hay || estado.pedidos.length > 0;
   if (!hay) return;
@@ -1096,6 +1097,11 @@ async function guardarCambiosPedido(datos, modelos) {
         fila.id = creado.id;
         fila.nombreOriginal = creado.nombre;
         fila.metaOriginal = creado.meta;
+        // Ya guardado: si otra fila falla y se reintenta, no debe mandar el nombre
+        // vacío de un modelo del stock ni dejar cambiar su tipo o producto.
+        fila.nombre.value = creado.nombre;
+        fila.tipo.disabled = true;
+        fila.opcion.disabled = true;
       } else if (m.nombre !== fila.nombreOriginal || m.meta !== fila.metaOriginal) {
         const cambios = {};
         if (m.nombre !== fila.nombreOriginal) cambios.nombre = m.nombre;
