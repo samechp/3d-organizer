@@ -349,6 +349,7 @@ function elementoPedido(p) {
     'aria-current': p.id === estado.pedidoId ? 'page' : false,
   },
     crear('span', { clase: 'nombre', texto: p.nombre }),
+    p.cliente ? crear('span', { clase: 'detalle', texto: p.cliente }) : null,
     crear('span', { clase: 'detalle' + (vencido ? ' vencido' : ''), texto: textoLinea(p) + (vencido ? ' · vencido' : '') }),
     crear('span', { clase: 'mini-barra' + (completo ? ' completo' : ''), 'aria-hidden': 'true' },
       crear('div', { style: `width:${p.avance.porcentaje}%` })),
